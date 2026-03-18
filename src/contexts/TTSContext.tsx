@@ -374,6 +374,11 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
   const preloadRequests = useRef<Map<string, Promise<string>>>(new Map());
   // Track active abort controllers for TTS requests
   const activeAbortControllers = useRef<Set<AbortController>>(new Set());
+  // Synchronous guard to prevent duplicate playAudio calls from the main playback effect.
+  // React state updates (isProcessing, activeHowl) are async, so between the effect firing
+  // and those guards taking effect, the effect can re-fire and start duplicate playback.
+  // This is especially problematic in Firefox where HTML5 Audio events can cause extra renders.
+  const playbackInFlightRef = useRef(false);
   // Track if we're restoring from a saved position
   const [pendingRestoreIndex, setPendingRestoreIndex] = useState<number | null>(null);
   // Guard to coalesce rapid restarts and only resume the latest change
@@ -1217,6 +1222,7 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
   const playSentenceWithHowl = useCallback(async (sentence: string, sentenceIndex: number) => {
     if (!sentence) {
       console.log('No sentence to play');
+      playbackInFlightRef.current = false;
       setIsProcessing(false);
       return;
     }
@@ -1238,6 +1244,9 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
       if (activeHowl) {
         activeHowl.unload();
       }
+
+      // Guard against Firefox firing onend/onstop multiple times for the same Audio element.
+      let howlFinished = false;
 
       return new Howl({
         src: [audioDataUri],
@@ -1285,6 +1294,8 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
           // Common on iOS/Safari when the actual play() call happens after awaiting TTS.
           // Do not skip/advance in this case; just pause and tell the user to tap play again.
           if (isAutoplayBlockedError(actualError)) {
+            howlFinished = true;
+            playbackInFlightRef.current = false;
             setIsProcessing(false);
             setActiveHowl(null);
             try {
@@ -1306,6 +1317,8 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
           // Avoid looping for many seconds on Safari: if playback still fails after a single
           // recovery attempt, skip the sentence and pause.
           if (playErrorAttempts > 1) {
+            howlFinished = true;
+            playbackInFlightRef.current = false;
             setIsProcessing(false);
             setActiveHowl(null);
             this.unload();
@@ -1354,12 +1367,16 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
                 retryHowl.play();
               } else {
                 // No audio generated (quota/abort). Stop cleanly without spamming errors.
+                howlFinished = true;
+                playbackInFlightRef.current = false;
                 setIsProcessing(false);
                 setActiveHowl(null);
                 setIsPlaying(false);
               }
             } catch (err) {
               console.error('Error creating Howl instance:', err);
+              howlFinished = true;
+              playbackInFlightRef.current = false;
               setIsProcessing(false);
               setActiveHowl(null);
               setIsPlaying(false);
@@ -1373,6 +1390,8 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
             }
           } else {
             console.error('Max retries reached, moving to next sentence');
+            howlFinished = true;
+            playbackInFlightRef.current = false;
             setIsProcessing(false);
             setActiveHowl(null);
             this.unload();
@@ -1387,8 +1406,11 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
           }
         },
         onend: function (this: Howl) {
+          if (howlFinished) return; // Deduplicate – Firefox can fire ended twice
+          howlFinished = true;
           clearRateWatchdog();
           this.unload();
+          playbackInFlightRef.current = false;
           setActiveHowl(null);
           if (pageTurnTimeoutRef.current) {
             clearTimeout(pageTurnTimeoutRef.current);
@@ -1399,7 +1421,10 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
           }
         },
         onstop: function (this: Howl) {
+          if (howlFinished) return;
+          howlFinished = true;
           clearRateWatchdog();
+          playbackInFlightRef.current = false;
           setIsProcessing(false);
           this.unload();
         }
@@ -1411,6 +1436,7 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
       if (!howl) {
         // No audio generated (quota hit / aborted / intentionally skipped). Stop cleanly without
         // advancing or spamming errors.
+        playbackInFlightRef.current = false;
         setActiveHowl(null);
         setIsProcessing(false);
         setIsPlaying(false);
@@ -1421,6 +1447,7 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
       return howl;
     } catch (error) {
       console.error('Error playing TTS:', error);
+      playbackInFlightRef.current = false;
       setActiveHowl(null);
       setIsProcessing(false);
 
@@ -1596,10 +1623,18 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
    * Controls the flow of audio playback and sentence processing
    */
   useEffect(() => {
-    if (!isPlaying) return; // Don't proceed if stopped
-    if (isProcessing) return; // Don't proceed if processing audio
+    if (!isPlaying) {
+      playbackInFlightRef.current = false;
+      return;
+    }
     if (!sentences[currentIndex]) return; // Don't proceed if no sentence to play
-    if (activeHowl) return; // Don't proceed if audio is already playing
+    // Single synchronous guard: covers the entire window from when playAudio() is
+    // called until the Howl finishes (onend/onstop/error). React state guards
+    // (isProcessing, activeHowl) are async and leave a micro-task gap that allows
+    // the effect to re-fire and start duplicate playback — especially in Firefox
+    // where HTML5 Audio events can trigger extra renders.
+    if (playbackInFlightRef.current) return;
+    playbackInFlightRef.current = true;
 
     // Start playing current sentence
     playAudio();
@@ -1615,10 +1650,8 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
     };
   }, [
     isPlaying,
-    isProcessing,
     currentIndex,
     sentences,
-    activeHowl,
     playAudio,
     preloadNextAudio,
     abortAudio
@@ -1630,6 +1663,7 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
   const stop = useCallback(() => {
     // Cancel any ongoing request
     abortAudio();
+    playbackInFlightRef.current = false;
     locationChangeHandlerRef.current = null;
     epubContinuationRef.current = null;
     continuationCarryRef.current.clear();
