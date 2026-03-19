@@ -346,18 +346,18 @@ export async function deleteDocumentByName(page: Page, fileName: string) {
   await confirmBtn.click();
 }
 
-// Open Settings modal and navigate to Documents tab
+// Open Settings modal and navigate to Documents section
 export async function openSettingsDocumentsTab(page: Page) {
   await page.getByRole('button', { name: 'Settings' }).click();
-  await page.getByRole('tab', { name: '📄 Docs' }).click();
+  await page.getByRole('button', { name: 'Documents' }).click();
 }
 
 // Delete all local documents through Settings and close dialogs
 export async function deleteAllLocalDocuments(page: Page) {
   await openSettingsDocumentsTab(page);
-  await page.getByRole('button', { name: /Delete (anonymous docs|all user docs|server docs)/i }).click();
+  await page.getByRole('button', { name: /Delete all data/i }).click();
 
-  const heading = page.getByRole('heading', { name: /Delete (Anonymous Docs|All User Docs|Server Docs)/i });
+  const heading = page.getByRole('heading', { name: /Delete All Data/i });
   await expect(heading).toBeVisible({ timeout: 10000 });
 
   const confirmBtn = heading.locator('xpath=ancestor::*[@role="dialog"][1]//button[normalize-space()="Delete"]');

@@ -13,7 +13,6 @@ import { updateAppConfig, getAppConfig } from '@/lib/client/dexie';
 
 interface PrivacyModalProps {
   onAccept?: () => void;
-  authEnabled?: boolean;
 }
 
 function PrivacyModalBody({ origin }: { origin: string }) {
@@ -32,7 +31,8 @@ function PrivacyModalBody({ origin }: { origin: string }) {
       </p>
 
       <p className="leading-relaxed">
-        For full details on data collection, processing, and your rights, please review our complete Privacy Policy.
+        For full details on data collection, processing, and your rights, please review our complete{' '}
+        <a href="/privacy" target="_blank" className="font-semibold text-accent hover:underline">Privacy Policy</a>.
       </p>
     </div>
   );

@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, ReactNode, useLayoutEffect } from 'react';
 
-const THEMES = ['system', 'light', 'dark', 'ocean', 'forest', 'sunset', 'sea', 'mint'] as const;
+const THEMES = ['system', 'light', 'dark', 'ocean', 'forest', 'sunset', 'sea', 'mint', 'lavender', 'rose', 'sand', 'sky', 'slate'] as const;
 type Theme = (typeof THEMES)[number];
 
 interface ThemeContextType {
@@ -17,11 +17,17 @@ const getSystemTheme = () => {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 };
 
+const LIGHT_THEMES: ReadonlySet<string> = new Set(['light', 'lavender', 'rose', 'sand', 'sky', 'slate']);
+
 const getEffectiveTheme = (theme: Theme): Theme => {
   if (theme === 'system') {
     return getSystemTheme();
   }
   return theme;
+};
+
+const getColorScheme = (theme: Theme): string => {
+  return LIGHT_THEMES.has(theme) ? 'light' : 'dark';
 };
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
@@ -36,7 +42,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const effectiveTheme = getEffectiveTheme(initialTheme);
     document.documentElement.classList.remove(...THEMES);
     document.documentElement.classList.add(effectiveTheme);
-    document.documentElement.style.colorScheme = effectiveTheme;
+    document.documentElement.style.colorScheme = getColorScheme(effectiveTheme);
     if (!stored) {
       localStorage.setItem('theme', initialTheme);
     }
@@ -49,8 +55,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     
     root.classList.remove(...THEMES);
     root.classList.add(effectiveTheme);
-    root.style.colorScheme = effectiveTheme;
-    
+    root.style.colorScheme = getColorScheme(effectiveTheme);
+
     localStorage.setItem('theme', newTheme);
     setTheme(newTheme);
   };
@@ -64,7 +70,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         const root = window.document.documentElement;
         root.classList.remove(...THEMES);
         root.classList.add(effectiveTheme);
-        root.style.colorScheme = effectiveTheme;
+        root.style.colorScheme = getColorScheme(effectiveTheme);
       }
     };
 

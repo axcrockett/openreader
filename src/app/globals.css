@@ -109,6 +109,81 @@ html.mint {
   );
 }
 
+html.lavender {
+  --background: #faf8ff;
+  --foreground: #3b2e5a;
+  --base: #f3effb;
+  --offbase: #e4daf0;
+  --accent: #7c3aed;
+  --secondary-accent: #a78bfa;
+  --muted: #8e7bab;
+  --prism-gradient: linear-gradient(90deg,
+    #c4b5fd,
+    #a78bfa,
+    #7c3aed
+  );
+}
+
+html.rose {
+  --background: #fff8f8;
+  --foreground: #4a2c2c;
+  --base: #fef1f1;
+  --offbase: #f5dada;
+  --accent: #e11d48;
+  --secondary-accent: #f472b6;
+  --muted: #b08a8a;
+  --prism-gradient: linear-gradient(90deg,
+    #fda4af,
+    #fb7185,
+    #e11d48
+  );
+}
+
+html.sand {
+  --background: #fdfbf7;
+  --foreground: #44392a;
+  --base: #f7f2e8;
+  --offbase: #e8dfc9;
+  --accent: #b45309;
+  --secondary-accent: #d97706;
+  --muted: #9a8b74;
+  --prism-gradient: linear-gradient(90deg,
+    #fcd34d,
+    #f59e0b,
+    #b45309
+  );
+}
+
+html.sky {
+  --background: #f6faff;
+  --foreground: #1e3a5f;
+  --base: #edf4fc;
+  --offbase: #d5e3f5;
+  --accent: #2563eb;
+  --secondary-accent: #3b82f6;
+  --muted: #6b8db5;
+  --prism-gradient: linear-gradient(90deg,
+    #93c5fd,
+    #60a5fa,
+    #2563eb
+  );
+}
+
+html.slate {
+  --background: #e8ecf0;
+  --foreground: #2c3440;
+  --base: #dde2e8;
+  --offbase: #c8ced6;
+  --accent: #5b7a9d;
+  --secondary-accent: #7393b0;
+  --muted: #7a8694;
+  --prism-gradient: linear-gradient(90deg,
+    #a3bdd4,
+    #7393b0,
+    #5b7a9d
+  );
+}
+
 body {
   color: var(--foreground);
   background: var(--background);

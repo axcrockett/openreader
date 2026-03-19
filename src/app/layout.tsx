@@ -14,7 +14,8 @@ const figtree = Figtree({
 
 const themeInitScript = `
 (() => {
-  const themes = ['system', 'light', 'dark', 'ocean', 'forest', 'sunset', 'sea', 'mint'];
+  const themes = ['system', 'light', 'dark', 'ocean', 'forest', 'sunset', 'sea', 'mint', 'lavender', 'rose', 'sand', 'sky', 'slate'];
+  const lightThemes = new Set(['light', 'lavender', 'rose', 'sand', 'sky', 'slate']);
   const root = document.documentElement;
   const stored = localStorage.getItem('theme');
   const selected = stored && themes.includes(stored) ? stored : 'system';
@@ -23,7 +24,7 @@ const themeInitScript = `
     : selected;
   root.classList.remove(...themes);
   root.classList.add(effective);
-  root.style.colorScheme = effective === 'dark' ? 'dark' : 'light';
+  root.style.colorScheme = lightThemes.has(effective) ? 'light' : 'dark';
 })();
 `;
 

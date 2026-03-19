@@ -39,7 +39,7 @@ export function Providers({ children, authEnabled, authBaseUrl, allowAnonymousAu
           <AuthLoader>
             <>
               {children}
-              <PrivacyModal authEnabled={authEnabled} />
+              {authEnabled && <PrivacyModal />}
             </>
           </AuthLoader>
         </ThemeProvider>
@@ -64,7 +64,7 @@ export function Providers({ children, authEnabled, authBaseUrl, allowAnonymousAu
                     <HTMLProvider>
                       <>
                         {children}
-                        <PrivacyModal authEnabled={authEnabled} />
+                        {authEnabled && <PrivacyModal />}
                         <DexieMigrationModal />
                       </>
                     </HTMLProvider>
