@@ -47,7 +47,7 @@ export function AudiobookExportModal({
   onGenerateAudiobook,
   onRegenerateChapter
 }: AudiobookExportModalProps) {
-  const { isLoading, isDBReady, ttsProvider, ttsModel, voice: configVoice, voiceSpeed, audioPlayerSpeed } = useConfig();
+  const { isLoading, isDBReady, ttsProvider, ttsModel, ttsInstructions, voice: configVoice, voiceSpeed, audioPlayerSpeed } = useConfig();
   const { availableVoices } = useTTS();
   const { progress, setProgress, estimatedTimeRemaining } = useTimeEstimation();
   const [isGenerating, setIsGenerating] = useState(false);
@@ -115,8 +115,9 @@ export function AudiobookExportModal({
       nativeSpeed,
       postSpeed,
       format,
+      ttsInstructions: ttsModel === 'gpt-4o-mini-tts' ? ttsInstructions : undefined,
     };
-  }, [savedSettings, audiobookVoice, configVoice, availableVoices, ttsProvider, ttsModel, nativeSpeed, postSpeed, format]);
+  }, [savedSettings, audiobookVoice, configVoice, availableVoices, ttsProvider, ttsModel, ttsInstructions, nativeSpeed, postSpeed, format]);
 
   const fetchExistingChapters = useCallback(async (soft: boolean = false) => {
     if (soft) {

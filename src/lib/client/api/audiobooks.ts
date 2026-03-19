@@ -115,12 +115,14 @@ export const getAudiobookStatus = async (bookId: string): Promise<AudiobookStatu
 
 export const createAudiobookChapter = async (
   payload: CreateChapterPayload,
+  headers: TTSRequestHeaders,
   signal?: AbortSignal
 ): Promise<TTSAudiobookChapter> => {
   const response = await fetch(`/api/audiobook/chapter`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...headers,
     },
     body: JSON.stringify(payload),
     signal

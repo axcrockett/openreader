@@ -56,11 +56,12 @@ export interface AudiobookGenerationSettings {
   nativeSpeed: number;
   postSpeed: number;
   format: TTSAudiobookFormat;
+  ttsInstructions?: string;
 }
 
 export interface CreateChapterPayload {
   chapterTitle: string;
-  buffer: TTSAudioBytes; // Array.from(new Uint8Array(audioBuffer))
+  text: string;
   bookId: string;
   format: TTSAudiobookFormat;
   chapterIndex: number;

@@ -25,7 +25,7 @@ import { useAuthConfig } from '@/contexts/AuthRateLimitContext';
 import { createRangeCfi } from '@/lib/client/epub';
 import { useParams } from 'next/navigation';
 import { useConfig } from './ConfigContext';
-import { withRetry, getAudiobookStatus, generateTTS, createAudiobookChapter } from '@/lib/client/api/audiobooks';
+import { withRetry, getAudiobookStatus, createAudiobookChapter } from '@/lib/client/api/audiobooks';
 import { CmpStr } from 'cmpstr';
 import type {
   TTSSentenceAlignment,
@@ -34,7 +34,6 @@ import type {
 } from '@/types/tts';
 import type {
   TTSRequestHeaders,
-  TTSRequestPayload,
   TTSRetryOptions,
   AudiobookGenerationSettings,
 } from '@/types/client';
@@ -179,11 +178,7 @@ export function EPUBProvider({ children }: { children: ReactNode }) {
   const {
     apiKey,
     baseUrl,
-    voiceSpeed,
-    voice,
     ttsProvider,
-    ttsModel,
-    ttsInstructions,
     smartSentenceSplitting,
     epubHighlightEnabled,
   } = useConfig();
@@ -358,16 +353,6 @@ export function EPUBProvider({ children }: { children: ReactNode }) {
       if (!sections.length) throw new Error('No text content found in book');
 
       const effectiveProvider = settings?.ttsProvider ?? ttsProvider;
-      const effectiveModel = settings?.ttsModel ?? ttsModel;
-      const effectiveVoice =
-        settings?.voice ||
-        voice ||
-        (effectiveProvider === 'openai'
-          ? 'alloy'
-          : effectiveProvider === 'deepinfra'
-            ? 'af_bella'
-            : 'af_sarah');
-      const effectiveNativeSpeed = settings?.nativeSpeed ?? voiceSpeed;
       const effectiveFormat = settings?.format ?? format;
 
       // Calculate total length for accurate progress tracking
@@ -448,34 +433,13 @@ export function EPUBProvider({ children }: { children: ReactNode }) {
             'x-tts-provider': effectiveProvider,
           };
 
-          const reqBody: TTSRequestPayload = {
-            text: trimmedText,
-            voice: effectiveVoice,
-            speed: effectiveNativeSpeed,
-            format: 'mp3',
-            model: effectiveModel,
-            instructions: effectiveModel === 'gpt-4o-mini-tts' ? ttsInstructions : undefined
-          };
-
-          // Allow one narrow client retry for transient browser->/api/tts transport failures.
+          // Allow one narrow client retry for transient browser->/api/audiobook/chapter transport failures.
           // HTTP failures are not retried client-side.
           const retryOptions: TTSRetryOptions = {
             maxRetries: 2,
             initialDelay: 300,
             maxDelay: 300,
           };
-
-          const audioBuffer = await withRetry(
-            async () => {
-              // Check for abort before starting TTS request
-              if (signal?.aborted) {
-                throw new DOMException('Aborted', 'AbortError');
-              }
-
-              return await generateTTS(reqBody, reqHeaders, signal);
-            },
-            retryOptions
-          );
 
           // Get the chapter title from our pre-computed map
           let chapterTitle = sectionTitleMap.get(section.href);
@@ -485,6 +449,25 @@ export function EPUBProvider({ children }: { children: ReactNode }) {
             chapterTitle = `Chapter ${i + 1}`;
           }
 
+          const chapter = await withRetry(
+            async () => {
+              // Check for abort before starting chapter request
+              if (signal?.aborted) {
+                throw new DOMException('Aborted', 'AbortError');
+              }
+
+              return await createAudiobookChapter({
+                chapterTitle,
+                text: trimmedText,
+                bookId,
+                format: effectiveFormat,
+                chapterIndex: i,
+                settings
+              }, reqHeaders, signal);
+            },
+            retryOptions
+          );
+
           // Check for abort before sending to server
           if (signal?.aborted) {
             console.log('Generation cancelled before saving chapter');
@@ -493,16 +476,6 @@ export function EPUBProvider({ children }: { children: ReactNode }) {
             }
             throw new Error('Audiobook generation cancelled');
           }
-
-          // Send to server for conversion and storage
-          const chapter = await createAudiobookChapter({
-            chapterTitle,
-            buffer: Array.from(new Uint8Array(audioBuffer)),
-            bookId,
-            format: effectiveFormat,
-            chapterIndex: i,
-            settings
-          }, signal);
 
           if (!bookId) {
             bookId = chapter.bookId!;
@@ -548,7 +521,7 @@ export function EPUBProvider({ children }: { children: ReactNode }) {
       console.error('Error creating audiobook:', error);
       throw error;
     }
-  }, [extractBookText, apiKey, baseUrl, voice, voiceSpeed, ttsProvider, ttsModel, ttsInstructions]);
+  }, [extractBookText, apiKey, baseUrl, ttsProvider]);
 
   /**
    * Regenerates a specific chapter of the audiobook
@@ -567,16 +540,6 @@ export function EPUBProvider({ children }: { children: ReactNode }) {
       }
 
       const effectiveProvider = settings?.ttsProvider ?? ttsProvider;
-      const effectiveModel = settings?.ttsModel ?? ttsModel;
-      const effectiveVoice =
-        settings?.voice ||
-        voice ||
-        (effectiveProvider === 'openai'
-          ? 'alloy'
-          : effectiveProvider === 'deepinfra'
-            ? 'af_bella'
-            : 'af_sarah');
-      const effectiveNativeSpeed = settings?.nativeSpeed ?? voiceSpeed;
       const effectiveFormat = settings?.format ?? format;
 
       const section = sections[chapterIndex];
@@ -615,16 +578,7 @@ export function EPUBProvider({ children }: { children: ReactNode }) {
         'x-tts-provider': effectiveProvider,
       };
 
-      const reqBody: TTSRequestPayload = {
-        text: trimmedText,
-        voice: effectiveVoice,
-        speed: effectiveNativeSpeed,
-        format: 'mp3',
-        model: effectiveModel,
-        instructions: effectiveModel === 'gpt-4o-mini-tts' ? ttsInstructions : undefined
-      };
-
-      // Allow one narrow client retry for transient browser->/api/tts transport failures.
+      // Allow one narrow client retry for transient browser->/api/audiobook/chapter transport failures.
       // HTTP failures are not retried client-side.
       const retryOptions: TTSRetryOptions = {
         maxRetries: 2,
@@ -632,13 +586,20 @@ export function EPUBProvider({ children }: { children: ReactNode }) {
         maxDelay: 300,
       };
 
-      const audioBuffer = await withRetry(
+      const chapter = await withRetry(
         async () => {
           if (signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');
           }
 
-          return await generateTTS(reqBody, reqHeaders, signal);
+          return await createAudiobookChapter({
+            chapterTitle,
+            text: trimmedText,
+            bookId,
+            format: effectiveFormat,
+            chapterIndex,
+            settings
+          }, reqHeaders, signal);
         },
         retryOptions
       );
@@ -646,16 +607,6 @@ export function EPUBProvider({ children }: { children: ReactNode }) {
       if (signal?.aborted) {
         throw new Error('Chapter regeneration cancelled');
       }
-
-      // Send to server for conversion and storage
-      const chapter = await createAudiobookChapter({
-        chapterTitle,
-        buffer: Array.from(new Uint8Array(audioBuffer)),
-        bookId,
-        format: effectiveFormat,
-        chapterIndex,
-        settings
-      }, signal);
 
       return chapter;
 
@@ -666,7 +617,7 @@ export function EPUBProvider({ children }: { children: ReactNode }) {
       console.error('Error regenerating chapter:', error);
       throw error;
     }
-  }, [extractBookText, apiKey, baseUrl, voice, voiceSpeed, ttsProvider, ttsModel, ttsInstructions]);
+  }, [extractBookText, apiKey, baseUrl, ttsProvider]);
 
   const setRendition = useCallback((rendition: Rendition) => {
     bookRef.current = rendition.book;

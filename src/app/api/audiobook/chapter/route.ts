@@ -8,6 +8,9 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { db } from '@/db';
 import { audiobooks, audiobookChapters } from '@/db/schema';
 import { requireAuthContext } from '@/lib/server/auth/auth';
+import { rateLimiter, RATE_LIMITS, isTtsRateLimitEnabled } from '@/lib/server/rate-limit/rate-limiter';
+import { getClientIp } from '@/lib/server/rate-limit/request-ip';
+import { getOrCreateDeviceId, setDeviceIdCookie } from '@/lib/server/rate-limit/device-id';
 import {
   deleteAudiobookObject,
   getAudiobookObjectBuffer,
@@ -25,14 +28,15 @@ import { isS3Configured } from '@/lib/server/storage/s3';
 import { getOpenReaderTestNamespace, getUnclaimedUserIdForNamespace } from '@/lib/server/testing/test-namespace';
 import { buildAllowedAudiobookUserIds, pickAudiobookOwner } from '@/lib/server/audiobooks/user-scope';
 import { getFFmpegPath } from '@/lib/server/audiobooks/ffmpeg-bin';
+import { generateTTSBuffer } from '@/lib/server/tts/generate';
 import type { AudiobookGenerationSettings } from '@/types/client';
-import type { TTSAudioBytes, TTSAudiobookFormat } from '@/types/tts';
+import type { TTSAudiobookFormat } from '@/types/tts';
 
 export const dynamic = 'force-dynamic';
 
 interface ConversionRequest {
   chapterTitle: string;
-  buffer: TTSAudioBytes;
+  text: string;
   bookId?: string;
   format?: TTSAudiobookFormat;
   chapterIndex?: number;
@@ -47,6 +51,35 @@ type ChapterObject = {
 };
 
 const SAFE_ID_REGEX = /^[a-zA-Z0-9._-]{1,128}$/;
+const PROBLEM_TYPES = {
+  dailyQuotaExceeded: 'https://openreader.app/problems/daily-quota-exceeded',
+} as const;
+
+type ProblemDetails = {
+  type: string;
+  title: string;
+  status: number;
+  detail?: string;
+  instance?: string;
+  code?: string;
+  [key: string]: unknown;
+};
+
+function attachDeviceIdCookie(response: NextResponse, deviceId: string | null, didCreate: boolean) {
+  if (didCreate && deviceId) {
+    setDeviceIdCookie(response, deviceId);
+  }
+}
+
+function formatLimitForHint(limit: number): string {
+  if (!Number.isFinite(limit) || limit <= 0) return String(limit);
+  if (limit >= 1_000_000) {
+    const m = limit / 1_000_000;
+    return `${m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)}M`;
+  }
+  if (limit >= 1_000) return `${Math.round(limit / 1_000)}K`;
+  return String(limit);
+}
 
 function isSafeId(value: string): boolean {
   return SAFE_ID_REGEX.test(value);
@@ -208,16 +241,21 @@ function findChapterFileNameByIndex(fileNames: string[], index: number): { fileN
 
 export async function POST(request: NextRequest) {
   let workDir: string | null = null;
+  let didCreateDeviceIdCookie = false;
+  let deviceIdToSet: string | null = null;
   try {
     if (!isS3Configured()) return s3NotConfiguredResponse();
 
     const data: ConversionRequest = await request.json();
     const requestedFormat = data.format || 'm4b';
+    if (!data.text || typeof data.text !== 'string') {
+      return NextResponse.json({ error: 'Missing text for TTS generation' }, { status: 400 });
+    }
 
     const ctxOrRes = await requireAuthContext(request);
     if (ctxOrRes instanceof Response) return ctxOrRes;
 
-    const { userId, authEnabled } = ctxOrRes;
+    const { userId, authEnabled, user } = ctxOrRes;
     const testNamespace = getOpenReaderTestNamespace(request.headers);
     const unclaimedUserId = getUnclaimedUserIdForNamespace(testNamespace);
     const { preferredUserId, allowedUserIds } = buildAllowedAudiobookUserIds(authEnabled, userId, unclaimedUserId);
@@ -270,7 +308,8 @@ export async function POST(request: NextRequest) {
         existingSettings.voice !== incomingSettings.voice ||
         existingSettings.nativeSpeed !== incomingSettings.nativeSpeed ||
         existingSettings.postSpeed !== incomingSettings.postSpeed ||
-        existingSettings.format !== incomingSettings.format;
+        existingSettings.format !== incomingSettings.format ||
+        (existingSettings.ttsInstructions || '') !== (incomingSettings.ttsInstructions || '');
       if (mismatch) {
         return NextResponse.json({ error: 'Audiobook settings mismatch', settings: existingSettings }, { status: 409 });
       }
@@ -309,12 +348,102 @@ export async function POST(request: NextRequest) {
       chapterIndex = next;
     }
 
+    const provider = request.headers.get('x-tts-provider')
+      || incomingSettings?.ttsProvider
+      || existingSettings?.ttsProvider
+      || 'openai';
+    const openApiKey = request.headers.get('x-openai-key') || process.env.API_KEY || 'none';
+    const openApiBaseUrl = request.headers.get('x-openai-base-url') || process.env.API_BASE;
+    const model = incomingSettings?.ttsModel ?? existingSettings?.ttsModel;
+    const voice = incomingSettings?.voice
+      || existingSettings?.voice
+      || (provider === 'openai'
+        ? 'alloy'
+        : provider === 'deepinfra'
+          ? 'af_bella'
+          : 'af_sarah');
+    const rawNativeSpeed = incomingSettings?.nativeSpeed ?? existingSettings?.nativeSpeed ?? 1;
+    const nativeSpeed = Number.isFinite(Number(rawNativeSpeed)) ? Number(rawNativeSpeed) : 1;
+    const instructions = incomingSettings?.ttsInstructions ?? existingSettings?.ttsInstructions;
+
+    if (authEnabled && userId && isTtsRateLimitEnabled()) {
+      const isAnonymous = Boolean(user?.isAnonymous);
+      const charCount = data.text.length;
+      const ip = getClientIp(request);
+      const device = isAnonymous ? getOrCreateDeviceId(request) : null;
+      if (device?.didCreate) {
+        didCreateDeviceIdCookie = true;
+        deviceIdToSet = device.deviceId;
+      }
+
+      const rateLimitResult = await rateLimiter.checkAndIncrementLimit(
+        { id: userId, isAnonymous },
+        charCount,
+        {
+          deviceId: device?.deviceId ?? null,
+          ip,
+        },
+      );
+
+      if (!rateLimitResult.allowed) {
+        const resetTimeMs = rateLimitResult.resetTimeMs;
+        const retryAfterSeconds = Math.max(
+          0,
+          Math.ceil((resetTimeMs - Date.now()) / 1000),
+        );
+
+        const problem: ProblemDetails = {
+          type: PROBLEM_TYPES.dailyQuotaExceeded,
+          title: 'Daily quota exceeded',
+          status: 429,
+          detail: 'Daily character limit exceeded',
+          code: 'USER_DAILY_QUOTA_EXCEEDED',
+          currentCount: rateLimitResult.currentCount,
+          limit: rateLimitResult.limit,
+          remainingChars: rateLimitResult.remainingChars,
+          resetTimeMs,
+          userType: isAnonymous ? 'anonymous' : 'authenticated',
+          upgradeHint: isAnonymous
+            ? `Sign up to increase your limit from ${formatLimitForHint(RATE_LIMITS.ANONYMOUS)} to ${formatLimitForHint(RATE_LIMITS.AUTHENTICATED)} characters per day`
+            : undefined,
+          instance: request.nextUrl.pathname,
+        };
+
+        const response = new NextResponse(JSON.stringify(problem), {
+          status: 429,
+          headers: {
+            'Content-Type': 'application/problem+json',
+            'Retry-After': String(retryAfterSeconds),
+          },
+        });
+
+        attachDeviceIdCookie(response, deviceIdToSet, didCreateDeviceIdCookie);
+        return response;
+      }
+    }
+
+    const ttsBuffer = await generateTTSBuffer(
+      {
+        text: data.text,
+        voice,
+        speed: nativeSpeed,
+        format: 'mp3',
+        model,
+        instructions,
+        provider,
+        apiKey: openApiKey,
+        baseUrl: openApiBaseUrl,
+        testNamespace,
+      },
+      request.signal,
+    );
+
     workDir = await mkdtemp(join(tmpdir(), 'openreader-audiobook-'));
     const inputPath = join(workDir, `${chapterIndex}-input.mp3`);
     const chapterOutputTempPath = join(workDir, `${chapterIndex}-chapter.tmp.${format}`);
     const titleTag = encodeChapterTitleTag(chapterIndex, data.chapterTitle);
 
-    await writeFile(inputPath, Buffer.from(new Uint8Array(data.buffer)));
+    await writeFile(inputPath, ttsBuffer);
 
     const canCopyMp3WithoutReencode = format === 'mp3' && postSpeed === 1;
     if (canCopyMp3WithoutReencode) {
@@ -398,7 +527,7 @@ export async function POST(request: NextRequest) {
         set: { title: data.chapterTitle, duration, format, filePath: finalChapterName },
       });
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       index: chapterIndex,
       title: data.chapterTitle,
       duration,
@@ -406,12 +535,18 @@ export async function POST(request: NextRequest) {
       bookId,
       format,
     });
+    attachDeviceIdCookie(response, deviceIdToSet, didCreateDeviceIdCookie);
+    return response;
   } catch (error) {
-    if ((error as Error)?.message === 'ABORTED' || request.signal.aborted) {
-      return NextResponse.json({ error: 'cancelled' }, { status: 499 });
+    if ((error as Error)?.message === 'ABORTED' || (error as Error)?.name === 'AbortError' || request.signal.aborted) {
+      const response = NextResponse.json({ error: 'cancelled' }, { status: 499 });
+      attachDeviceIdCookie(response, deviceIdToSet, didCreateDeviceIdCookie);
+      return response;
     }
     console.error('Error processing audio chapter:', error);
-    return NextResponse.json({ error: 'Failed to process audio chapter' }, { status: 500 });
+    const response = NextResponse.json({ error: 'Failed to process audio chapter' }, { status: 500 });
+    attachDeviceIdCookie(response, deviceIdToSet, didCreateDeviceIdCookie);
+    return response;
   } finally {
     if (workDir) await rm(workDir, { recursive: true, force: true }).catch(() => {});
   }

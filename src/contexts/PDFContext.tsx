@@ -32,7 +32,7 @@ import { ensureCachedDocument } from '@/lib/client/cache/documents';
 import { useTTS } from '@/contexts/TTSContext';
 import { useConfig } from '@/contexts/ConfigContext';
 import { normalizeTextForTts } from '@/lib/shared/nlp';
-import { withRetry, getAudiobookStatus, generateTTS, createAudiobookChapter } from '@/lib/client/api/audiobooks';
+import { withRetry, getAudiobookStatus, createAudiobookChapter } from '@/lib/client/api/audiobooks';
 import {
   extractTextFromPDF,
   highlightPattern,
@@ -43,13 +43,11 @@ import {
 
 import type {
   TTSSentenceAlignment,
-  TTSAudioBuffer,
   TTSAudiobookFormat,
   TTSAudiobookChapter,
 } from '@/types/tts';
 import type {
   TTSRequestHeaders,
-  TTSRequestPayload,
   TTSRetryOptions,
   AudiobookGenerationSettings,
 } from '@/types/client';
@@ -130,11 +128,7 @@ export function PDFProvider({ children }: { children: ReactNode }) {
     rightMargin,
     apiKey,
     baseUrl,
-    voiceSpeed,
-    voice,
     ttsProvider,
-    ttsModel,
-    ttsInstructions,
     smartSentenceSplitting,
   } = useConfig();
 
@@ -420,16 +414,6 @@ export function PDFProvider({ children }: { children: ReactNode }) {
       }
 
       const effectiveProvider = settings?.ttsProvider ?? ttsProvider;
-      const effectiveModel = settings?.ttsModel ?? ttsModel;
-      const effectiveVoice =
-        settings?.voice ||
-        voice ||
-        (effectiveProvider === 'openai'
-          ? 'alloy'
-          : effectiveProvider === 'deepinfra'
-            ? 'af_bella'
-            : 'af_sarah');
-      const effectiveNativeSpeed = settings?.nativeSpeed ?? voiceSpeed;
       const effectiveFormat = settings?.format ?? format;
 
       // First pass: extract and measure all text
@@ -504,16 +488,7 @@ export function PDFProvider({ children }: { children: ReactNode }) {
           'x-tts-provider': effectiveProvider,
         };
 
-        const reqBody: TTSRequestPayload = {
-          text,
-          voice: effectiveVoice,
-          speed: effectiveNativeSpeed,
-          format: 'mp3',
-          model: effectiveModel,
-          instructions: effectiveModel === 'gpt-4o-mini-tts' ? ttsInstructions : undefined
-        };
-
-        // Allow one narrow client retry for transient browser->/api/tts transport failures.
+        // Allow one narrow client retry for transient browser->/api/audiobook/chapter transport failures.
         // HTTP failures are not retried client-side.
         const retryOptions: TTSRetryOptions = {
           maxRetries: 2,
@@ -522,19 +497,26 @@ export function PDFProvider({ children }: { children: ReactNode }) {
         };
 
         try {
-          const audioBuffer = await withRetry(
+          const chapterTitle = `Page ${i + 1}`;
+
+          const chapter = await withRetry(
             async () => {
-              // Check for abort before starting TTS request
+              // Check for abort before starting chapter request
               if (signal?.aborted) {
                 throw new DOMException('Aborted', 'AbortError');
               }
 
-              return await generateTTS(reqBody, reqHeaders, signal);
+              return await createAudiobookChapter({
+                chapterTitle,
+                text,
+                bookId,
+                format: effectiveFormat,
+                chapterIndex: i,
+                settings
+              }, reqHeaders, signal);
             },
             retryOptions
           );
-
-          const chapterTitle = `Page ${i + 1}`;
 
           // Check for abort before sending to server
           if (signal?.aborted) {
@@ -544,16 +526,6 @@ export function PDFProvider({ children }: { children: ReactNode }) {
             }
             throw new Error('Audiobook generation cancelled');
           }
-
-          // Send to server for conversion and storage
-          const chapter = await createAudiobookChapter({
-            chapterTitle,
-            buffer: Array.from(new Uint8Array(audioBuffer)),
-            bookId,
-            format: effectiveFormat,
-            chapterIndex: i,
-            settings
-          }, signal);
 
           if (!bookId) {
             bookId = chapter.bookId!;
@@ -599,7 +571,7 @@ export function PDFProvider({ children }: { children: ReactNode }) {
       console.error('Error creating audiobook:', error);
       throw error;
     }
-  }, [pdfDocument, headerMargin, footerMargin, leftMargin, rightMargin, apiKey, baseUrl, voice, voiceSpeed, ttsProvider, ttsModel, ttsInstructions, smartSentenceSplitting]);
+  }, [pdfDocument, headerMargin, footerMargin, leftMargin, rightMargin, apiKey, baseUrl, ttsProvider, smartSentenceSplitting]);
 
   /**
    * Regenerates a specific chapter (page) of the PDF audiobook
@@ -617,16 +589,6 @@ export function PDFProvider({ children }: { children: ReactNode }) {
       }
 
       const effectiveProvider = settings?.ttsProvider ?? ttsProvider;
-      const effectiveModel = settings?.ttsModel ?? ttsModel;
-      const effectiveVoice =
-        settings?.voice ||
-        voice ||
-        (effectiveProvider === 'openai'
-          ? 'alloy'
-          : effectiveProvider === 'deepinfra'
-            ? 'af_bella'
-            : 'af_sarah');
-      const effectiveNativeSpeed = settings?.nativeSpeed ?? voiceSpeed;
       const effectiveFormat = settings?.format ?? format;
 
       // IMPORTANT: Chapter indices are based on non-empty pages used during generation.
@@ -678,16 +640,7 @@ export function PDFProvider({ children }: { children: ReactNode }) {
         'x-tts-provider': effectiveProvider,
       };
 
-      const reqBody: TTSRequestPayload = {
-        text: textForTTS,
-        voice: effectiveVoice,
-        speed: effectiveNativeSpeed,
-        format: 'mp3',
-        model: effectiveModel,
-        instructions: effectiveModel === 'gpt-4o-mini-tts' ? ttsInstructions : undefined
-      };
-
-      // Allow one narrow client retry for transient browser->/api/tts transport failures.
+      // Allow one narrow client retry for transient browser->/api/audiobook/chapter transport failures.
       // HTTP failures are not retried client-side.
       const retryOptions: TTSRetryOptions = {
         maxRetries: 2,
@@ -695,13 +648,20 @@ export function PDFProvider({ children }: { children: ReactNode }) {
         maxDelay: 300,
       };
 
-      const audioBuffer: TTSAudioBuffer = await withRetry(
+      const chapter = await withRetry(
         async () => {
           if (signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');
           }
 
-          return await generateTTS(reqBody, reqHeaders, signal);
+          return await createAudiobookChapter({
+            chapterTitle,
+            text: textForTTS,
+            bookId,
+            format: effectiveFormat,
+            chapterIndex,
+            settings
+          }, reqHeaders, signal);
         },
         retryOptions
       );
@@ -709,16 +669,6 @@ export function PDFProvider({ children }: { children: ReactNode }) {
       if (signal?.aborted) {
         throw new Error('Page regeneration cancelled');
       }
-
-      // Send to server for conversion and storage
-      const chapter = await createAudiobookChapter({
-        chapterTitle,
-        buffer: Array.from(new Uint8Array(audioBuffer)),
-        bookId,
-        format: effectiveFormat,
-        chapterIndex,
-        settings
-      }, signal);
 
       return chapter;
 
@@ -729,7 +679,7 @@ export function PDFProvider({ children }: { children: ReactNode }) {
       console.error('Error regenerating page:', error);
       throw error;
     }
-  }, [pdfDocument, headerMargin, footerMargin, leftMargin, rightMargin, apiKey, baseUrl, voice, voiceSpeed, ttsProvider, ttsModel, ttsInstructions, smartSentenceSplitting]);
+  }, [pdfDocument, headerMargin, footerMargin, leftMargin, rightMargin, apiKey, baseUrl, ttsProvider, smartSentenceSplitting]);
 
   /**
    * Effect hook to initialize TTS as non-EPUB mode
