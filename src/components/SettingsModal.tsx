@@ -175,7 +175,7 @@ export function SettingsModal({ className = '' }: { className?: string }) {
 
   const checkFirstVist = useCallback(async () => {
     const appConfig = await getAppConfig();
-    if (!appConfig?.privacyAccepted) {
+    if (authEnabled && !appConfig?.privacyAccepted) {
       return;
     }
     const firstVisit = await getFirstVisit();
@@ -183,7 +183,7 @@ export function SettingsModal({ className = '' }: { className?: string }) {
       await setFirstVisit(true);
       setIsOpen(true);
     }
-  }, [setIsOpen]);
+  }, [authEnabled, setIsOpen]);
 
   useEffect(() => {
     checkFirstVist().catch((err) => {
@@ -197,6 +197,9 @@ export function SettingsModal({ className = '' }: { className?: string }) {
   }, [apiKey, baseUrl, ttsProvider, ttsModel, ttsInstructions, checkFirstVist]);
 
   useEffect(() => {
+    if (!authEnabled) {
+      return;
+    }
     const onPrivacyAccepted = () => {
       checkFirstVist().catch((err) => {
         console.error('First visit check after privacy acceptance failed:', err);
@@ -206,7 +209,7 @@ export function SettingsModal({ className = '' }: { className?: string }) {
     return () => {
       window.removeEventListener('openreader:privacyAccepted', onPrivacyAccepted);
     };
-  }, [checkFirstVist]);
+  }, [authEnabled, checkFirstVist]);
 
   useEffect(() => {
     if (!ttsModels.some(m => m.id === modelValue) && modelValue !== '') {

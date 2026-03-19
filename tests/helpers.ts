@@ -225,8 +225,16 @@ export async function setupTest(page: Page, testInfo?: TestInfo) {
     await cookieAcceptBtn.click();
   }
 
-  // Settings modal should appear after privacy acceptance on first visit.
-  const saveBtn = page.getByRole('button', { name: 'Save' });
+  // Settings modal should appear on first visit. In non-auth mode there is no
+  // privacy modal, so open Settings explicitly if onboarding did not auto-open.
+  const settingsDialog = page.getByRole('dialog', { name: 'Settings' });
+  const saveBtn = settingsDialog.getByRole('button', { name: 'Save' });
+  if (!(await saveBtn.isVisible().catch(() => false))) {
+    const settingsBtn = page.getByRole('button', { name: 'Settings' });
+    if (await settingsBtn.isVisible().catch(() => false)) {
+      await settingsBtn.click();
+    }
+  }
   await expect(saveBtn).toBeVisible({ timeout: 10000 });
   // SettingsModal can briefly disable Save while it mirrors a custom model into the input field.
   await expect(saveBtn).toBeEnabled({ timeout: 15000 });
@@ -239,7 +247,7 @@ export async function setupTest(page: Page, testInfo?: TestInfo) {
 
   // Click the "done" button to dismiss the welcome message
   await saveBtn.click();
-  await page.getByRole('dialog', { name: 'Settings' }).waitFor({ state: 'hidden', timeout: 15000 });
+  await settingsDialog.waitFor({ state: 'hidden', timeout: 15000 });
 }
 
 /**
