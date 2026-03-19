@@ -97,10 +97,35 @@ test.describe('Play/Pause Tests', () => {
     expect(await options.count()).toBeGreaterThan(0);
 
     await selectVoiceAndAssertPlayback(page, 'af_bella');
-    //await expectProcessingTransition(page);
 
     // Final state should be playing
     await expectMediaState(page, 'playing');
+  });
+
+  test('keeps selected single voice instead of resetting to first option', async ({ page }) => {
+    await playTTSAndWaitForASecond(page, 'sample.pdf');
+
+    await openVoicesMenu(page);
+    const options = page.locator('[role="option"]:visible');
+    const optionCount = await options.count();
+    expect(optionCount).toBeGreaterThan(1);
+
+    const uniqueVoices: string[] = [];
+    for (let i = 0; i < optionCount; i++) {
+      const candidate = (await options.nth(i).innerText()).trim();
+      if (candidate && !uniqueVoices.includes(candidate)) uniqueVoices.push(candidate);
+    }
+    expect(uniqueVoices.length).toBeGreaterThan(1);
+
+    const selectedVoice = uniqueVoices[1] || '';
+    expect(selectedVoice).not.toBe('');
+
+    await selectVoiceAndAssertPlayback(page, selectedVoice);
+
+    const ttsbar = page.locator('[data-app-ttsbar]');
+    await expect(ttsbar.getByRole('button', { name: selectedVoice }).first()).toBeVisible();
+    await page.waitForTimeout(1000);
+    await expect(ttsbar.getByRole('button', { name: selectedVoice }).first()).toBeVisible();
   });
 
   if (!process.env.CI) test('selects multiple Kokoro voices and resumes playing', async ({ page }) => {

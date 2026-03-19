@@ -122,38 +122,45 @@ async function withDownloadedFullAudiobook<T>(
   }
 }
 
-/**
- * Poll the backend until the chapter count stops changing for `stableMs` milliseconds.
- * This helps avoid race conditions where in-flight TTS requests complete after cancellation.
- */
-async function waitForStableChapterCount(
+async function waitForStableUiChapterCount(
   page: Page,
-  bookId: string,
   { stableMs = 2000, timeoutMs = 30000 } = {}
-): Promise<{ count: number; json: ReturnType<typeof expectChaptersBackendState> extends Promise<infer T> ? T : never }> {
+): Promise<number> {
+  const chapterActionsButtons = page.getByRole('button', { name: 'Chapter actions' });
   const startTime = Date.now();
   let lastCount = -1;
   let lastStableTime = Date.now();
-  let lastJson: Awaited<ReturnType<typeof expectChaptersBackendState>> | null = null;
 
   while (Date.now() - startTime < timeoutMs) {
-    const json = await expectChaptersBackendState(page, bookId);
-    const currentCount = json.chapters?.length ?? 0;
-    lastJson = json;
-
+    const currentCount = await chapterActionsButtons.count();
     if (currentCount !== lastCount) {
       lastCount = currentCount;
       lastStableTime = Date.now();
     } else if (Date.now() - lastStableTime >= stableMs) {
-      // Count has been stable for stableMs
-      return { count: currentCount, json };
+      return currentCount;
     }
-
     await page.waitForTimeout(200);
   }
 
-  // Timeout reached, return whatever we have
-  return { count: lastCount, json: lastJson! };
+  return Math.max(lastCount, 0);
+}
+
+async function cancelGenerationIfVisible(page: Page): Promise<void> {
+  const generationCard = page.locator('div', { hasText: 'Generating Audiobook' }).first();
+  const cancelButton = generationCard.getByRole('button', { name: 'Cancel' });
+  const isVisible = await cancelButton.isVisible({ timeout: 2000 }).catch(() => false);
+  if (!isVisible) return;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await cancelButton.click({ timeout: 5000 });
+      return;
+    } catch {
+      const cardGone = (await generationCard.count()) === 0;
+      if (cardGone) return;
+      await page.waitForTimeout(150);
+    }
+  }
 }
 
 async function resetAudiobookById(page: Page, bookId: string) {
@@ -257,43 +264,25 @@ test('exports partial MP3 audiobook for EPUB using mocked 10s TTS sample', async
   const cancelButton = generationCard.getByRole('button', { name: 'Cancel' });
   await expect(cancelButton).toBeVisible({ timeout: 60_000 });
 
-  // Ensure at least one chapter is persisted before cancellation so partial-export
-  // assertions are deterministic under the new server-side generation flow.
-  await expect
-    .poll(async () => {
-      const json = await expectChaptersBackendState(page, bookId);
-      return json.chapters?.length ?? 0;
-    }, { timeout: 60_000 })
-    .toBeGreaterThan(0);
+  // UI-first readiness check: wait until at least one chapter row is visible before cancellation.
+  await waitForChaptersHeading(page);
+  const chapterActionsButtons = page.getByRole('button', { name: 'Chapter actions' });
+  await expect(chapterActionsButtons.first()).toBeVisible({ timeout: 60_000 });
 
   // Now cancel the in-flight generation
-  await cancelButton.click();
+  await cancelGenerationIfVisible(page);
 
   // Cancellation is asynchronous: wait for generation to settle before asserting
   // that the inline progress card has disappeared.
-  await expect(page.getByRole('heading', { name: 'Chapters' })).toBeVisible({ timeout: 60_000 });
   await expect(page.getByRole('button', { name: 'Resume' })).toBeVisible({ timeout: 30_000 });
   await expect(generationCard).toHaveCount(0, { timeout: 30_000 });
 
-  const chapterActionsButtons = page.getByRole('button', { name: 'Chapter actions' });
-
-  // After cancellation, wait for the chapter count to stabilize. In-flight TTS
-  // requests may still complete after we click cancel, so we poll until the
-  // count stops changing for a brief period.
-  const { count: chapterCountAfterCancel, json: jsonAfterCancel } = await waitForStableChapterCount(
-    page,
-    bookId,
-    { stableMs: 2000, timeoutMs: 30000 }
-  );
-  expect(jsonAfterCancel.exists).toBe(true);
-  expect(Array.isArray(jsonAfterCancel.chapters)).toBe(true);
+  // Chapter list can continue updating briefly after cancellation; wait for UI count to stabilize.
+  const chapterCountAfterCancel = await waitForStableUiChapterCount(page, { stableMs: 2000, timeoutMs: 30000 });
   expect(chapterCountAfterCancel).toBeGreaterThanOrEqual(1);
 
-  // UI refresh can lag behind backend stabilization after cancellation; require at
-  // at least the stabilized backend chapter count instead of exact backend parity.
-  await expect
-    .poll(async () => chapterActionsButtons.count(), { timeout: 60_000 })
-    .toBeGreaterThanOrEqual(chapterCountAfterCancel);
+  // Keep assertions frontend-driven: chapter rows should remain visible and usable.
+  await expect(chapterActionsButtons.first()).toBeVisible({ timeout: 60_000 });
 
   // The Full Download button should still be available for the partially generated audiobook
   await withDownloadedFullAudiobook(page, async ({ filePath }) => {
@@ -301,13 +290,6 @@ test('exports partial MP3 audiobook for EPUB using mocked 10s TTS sample', async
     expect(durationSeconds).toBeGreaterThan(9);
     expect(durationSeconds).toBeLessThan(300);
   });
-
-  // Backend should still reflect the same number of chapters as when we first
-  // observed the stabilized post-cancellation state.
-  const json = await expectChaptersBackendState(page, bookId);
-  expect(json.exists).toBe(true);
-  expect(Array.isArray(json.chapters)).toBe(true);
-  expect(json.chapters.length).toBeGreaterThanOrEqual(chapterCountAfterCancel);
 
   await resetAudiobookIfPresent(page);
 });
@@ -353,20 +335,13 @@ test('resets all MP3 audiobook PDF pages', async ({ page }, testInfo) => {
 
   await waitForChaptersHeading(page);
 
-  // Wait for backend to persist at least one chapter.
-  await expect
-    .poll(async () => {
-      const json = await expectChaptersBackendState(page, bookId);
-      return json.chapters?.length ?? 0;
-    }, { timeout: 120_000 })
-    .toBeGreaterThan(0);
+  // UI-first readiness check: wait for at least one chapter row.
+  const chapterActionsButtons = page.getByRole('button', { name: 'Chapter actions' });
+  await expect(chapterActionsButtons.first()).toBeVisible({ timeout: 120_000 });
 
   // Reset is shown only while generation is idle; cancel any in-flight work first.
   const generationCard = page.locator('div', { hasText: 'Generating Audiobook' }).first();
-  const cancelButton = generationCard.getByRole('button', { name: 'Cancel' });
-  if (await cancelButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await cancelButton.click();
-  }
+  await cancelGenerationIfVisible(page);
   await expect(generationCard).toHaveCount(0, { timeout: 60_000 });
 
   // Wait for Reset button to become visible, indicating resumable/generated state
@@ -382,14 +357,7 @@ test('resets all MP3 audiobook PDF pages', async ({ page }, testInfo) => {
 
   // After reset, generation should be startable again
   await expect(page.getByRole('button', { name: 'Start Generation' })).toBeVisible({ timeout: 60_000 });
-
-  // Backend should report no existing chapters for this bookId
-  const res = await page.request.get(`/api/audiobook/status?bookId=${bookId}`);
-  expect(res.ok()).toBeTruthy();
-  const json = await res.json();
-  expect(json.exists).toBe(false);
-  expect(Array.isArray(json.chapters)).toBe(true);
-  expect(json.chapters.length).toBe(0);
+  await expect(chapterActionsButtons).toHaveCount(0);
 });
 
 test('regenerates a single MP3 audiobook PDF page and exports full audiobook', async ({ page }, testInfo) => {

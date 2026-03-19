@@ -238,12 +238,9 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     if (appConfig.ttsInstructions !== APP_CONFIG_DEFAULTS.ttsInstructions) {
       resetPatch.ttsInstructions = APP_CONFIG_DEFAULTS.ttsInstructions;
     }
-    if (appConfig.voice !== APP_CONFIG_DEFAULTS.voice) {
-      resetPatch.voice = APP_CONFIG_DEFAULTS.voice;
-    }
-    if (Object.keys(appConfig.savedVoices || {}).length > 0) {
-      resetPatch.savedVoices = APP_CONFIG_DEFAULTS.savedVoices;
-    }
+    // Keep voice selection state intact so player/Audiobook voice pickers still
+    // work when the TTS providers tab is hidden. This reset is only for provider
+    // configuration fields.
 
     if (Object.keys(resetPatch).length === 0) return;
 
