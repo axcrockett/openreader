@@ -53,6 +53,7 @@ const ConfigContext = createContext<ConfigContextType | undefined>(undefined);
 export function ConfigProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isDBReady, setIsDBReady] = useState(false);
+  const ttsProvidersTabDisabled = process.env.NEXT_PUBLIC_ENABLE_TTS_PROVIDERS_TAB === 'false';
   const didRunStartupMigrations = useRef(false);
   const didAttemptInitialPreferenceSeedForSession = useRef<string | null>(null);
   const syncedPreferenceKeys = useMemo(() => new Set<string>(SYNCED_PREFERENCE_KEYS), []);
@@ -216,6 +217,41 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     void id;
     return { ...APP_CONFIG_DEFAULTS, ...rest };
   }, [appConfig]);
+
+  useEffect(() => {
+    if (!ttsProvidersTabDisabled || !isDBReady || !appConfig) return;
+
+    const resetPatch: Partial<AppConfigRow> = {};
+
+    if (appConfig.apiKey !== APP_CONFIG_DEFAULTS.apiKey) {
+      resetPatch.apiKey = APP_CONFIG_DEFAULTS.apiKey;
+    }
+    if (appConfig.baseUrl !== APP_CONFIG_DEFAULTS.baseUrl) {
+      resetPatch.baseUrl = APP_CONFIG_DEFAULTS.baseUrl;
+    }
+    if (appConfig.ttsProvider !== APP_CONFIG_DEFAULTS.ttsProvider) {
+      resetPatch.ttsProvider = APP_CONFIG_DEFAULTS.ttsProvider;
+    }
+    if (appConfig.ttsModel !== APP_CONFIG_DEFAULTS.ttsModel) {
+      resetPatch.ttsModel = APP_CONFIG_DEFAULTS.ttsModel;
+    }
+    if (appConfig.ttsInstructions !== APP_CONFIG_DEFAULTS.ttsInstructions) {
+      resetPatch.ttsInstructions = APP_CONFIG_DEFAULTS.ttsInstructions;
+    }
+    if (appConfig.voice !== APP_CONFIG_DEFAULTS.voice) {
+      resetPatch.voice = APP_CONFIG_DEFAULTS.voice;
+    }
+    if (Object.keys(appConfig.savedVoices || {}).length > 0) {
+      resetPatch.savedVoices = APP_CONFIG_DEFAULTS.savedVoices;
+    }
+
+    if (Object.keys(resetPatch).length === 0) return;
+
+    updateAppConfig(resetPatch).catch((error) => {
+      console.warn('Failed to clear hidden TTS provider settings:', error);
+    });
+    queueSyncedPreferencePatch(resetPatch);
+  }, [ttsProvidersTabDisabled, isDBReady, appConfig, queueSyncedPreferencePatch]);
 
   useEffect(() => {
     if (!isDBReady || !authEnabled || !appConfig || isSessionPending) return;
