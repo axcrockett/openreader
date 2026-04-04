@@ -34,6 +34,8 @@ import { showPrivacyModal } from '@/components/PrivacyModal';
 import { deleteDocuments, mimeTypeForDoc, uploadDocuments } from '@/lib/client/api/documents';
 import { cacheStoredDocumentFromBytes, clearDocumentCache } from '@/lib/client/cache/documents';
 import { clearAllDocumentPreviewCaches, clearInMemoryDocumentPreviewCache } from '@/lib/client/cache/previews';
+import { resolveTtsSettingsViewModel } from '@/lib/client/settings/tts-settings';
+import { supportsTtsInstructions } from '@/lib/shared/tts-provider-catalog';
 
 const enableDestructiveDelete = process.env.NEXT_PUBLIC_ENABLE_DESTRUCTIVE_DELETE_ACTIONS !== 'false';
 const showAllDeepInfra = process.env.NEXT_PUBLIC_SHOW_ALL_DEEPINFRA_MODELS !== 'false';
@@ -115,64 +117,19 @@ export function SettingsModal({ className = '' }: { className?: string }) {
   const router = useRouter();
   const isBusy = isImportingLibrary;
 
-  const ttsProviders = useMemo(() => [
-    { id: 'custom-openai', name: 'Custom OpenAI-Like' },
-    { id: 'deepinfra', name: 'Deepinfra' },
-    { id: 'openai', name: 'OpenAI' }
-  ], []);
-
-  const ttsModels = useMemo(() => {
-    switch (localTTSProvider) {
-      case 'openai':
-        return [
-          { id: 'tts-1', name: 'TTS-1' },
-          { id: 'tts-1-hd', name: 'TTS-1 HD' },
-          { id: 'gpt-4o-mini-tts', name: 'GPT-4o Mini TTS' }
-        ];
-      case 'custom-openai':
-        return [
-          { id: 'kokoro', name: 'Kokoro' },
-          { id: 'kitten-tts', name: 'KittenTTS' },
-          { id: 'orpheus', name: 'Orpheus' },
-          { id: 'custom', name: 'Other' }
-        ];
-      case 'deepinfra':
-        if (!showAllDeepInfra && !localApiKey) {
-          return [
-            { id: 'hexgrad/Kokoro-82M', name: 'hexgrad/Kokoro-82M' }
-          ];
-        }
-        return [
-          { id: 'hexgrad/Kokoro-82M', name: 'hexgrad/Kokoro-82M' },
-          { id: 'canopylabs/orpheus-3b-0.1-ft', name: 'canopylabs/orpheus-3b-0.1-ft' },
-          { id: 'sesame/csm-1b', name: 'sesame/csm-1b' },
-          { id: 'ResembleAI/chatterbox', name: 'ResembleAI/chatterbox' },
-          { id: 'Zyphra/Zonos-v0.1-hybrid', name: 'Zyphra/Zonos-v0.1-hybrid' },
-          { id: 'Zyphra/Zonos-v0.1-transformer', name: 'Zyphra/Zonos-v0.1-transformer' },
-          { id: 'custom', name: 'Other' }
-        ];
-      default:
-        return [
-          { id: 'tts-1', name: 'TTS-1' }
-        ];
-    }
-  }, [localTTSProvider, localApiKey]);
-
-  const supportsCustom = useMemo(() => localTTSProvider !== 'openai', [localTTSProvider]);
-
-  const selectedModelId = useMemo(
-    () => {
-      const isPreset = ttsModels.some(m => m.id === modelValue);
-      if (isPreset) return modelValue;
-      return supportsCustom ? 'custom' : (ttsModels[0]?.id ?? '');
-    },
-    [ttsModels, modelValue, supportsCustom]
-  );
-
-  const canSubmit = useMemo(
-    () => selectedModelId !== 'custom' || (supportsCustom && customModelInput.trim().length > 0),
-    [selectedModelId, supportsCustom, customModelInput]
-  );
+  const {
+    providers: ttsProviders,
+    models: ttsModels,
+    supportsCustomModel: supportsCustom,
+    selectedModelId,
+    canSubmit,
+  } = useMemo(() => resolveTtsSettingsViewModel({
+    provider: localTTSProvider,
+    apiKey: localApiKey,
+    modelValue,
+    customModelInput,
+    showAllDeepInfra,
+  }), [localTTSProvider, localApiKey, modelValue, customModelInput]);
 
   const checkFirstVist = useCallback(async () => {
     const appConfig = await getAppConfig();
@@ -672,7 +629,7 @@ export function SettingsModal({ className = '' }: { className?: string }) {
                             </div>
                           </div>
 
-                          {modelValue === 'gpt-4o-mini-tts' && (
+                          {supportsTtsInstructions(modelValue) && (
                             <div className="space-y-1.5">
                               <label className="block text-sm font-medium text-foreground">TTS Instructions</label>
                               <textarea

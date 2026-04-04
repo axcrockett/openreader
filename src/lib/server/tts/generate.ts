@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { SpeechCreateParams } from 'openai/resources/audio/speech.mjs';
 import { isKokoroModel } from '@/lib/shared/kokoro';
+import { supportsTtsInstructions } from '@/lib/shared/tts-provider-catalog';
 import { LRUCache } from 'lru-cache';
 import { createHash } from 'crypto';
 import { access, readFile } from 'fs/promises';
@@ -83,7 +84,7 @@ function resolveTTSRequest(input: ServerTTSRequest): ResolvedServerTTSRequest {
 
   const format = input.format || 'mp3';
   const speed = Number.isFinite(Number(input.speed)) ? Number(input.speed) : 1;
-  const instructions = (model as string) === 'gpt-4o-mini-tts' && input.instructions
+  const instructions = supportsTtsInstructions(model as string) && input.instructions
     ? input.instructions
     : undefined;
 

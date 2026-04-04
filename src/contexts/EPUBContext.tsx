@@ -16,6 +16,8 @@ import type { NavItem } from 'epubjs';
 import type { SpineItem } from 'epubjs/types/section';
 import type { Book, Rendition } from 'epubjs';
 
+import { createEpubAudiobookSourceAdapter } from '@/lib/client/audiobooks/adapters/epub';
+import { regenerateAudiobookChapter, runAudiobookGeneration } from '@/lib/client/audiobooks/pipeline';
 import { setLastDocumentLocation } from '@/lib/client/dexie';
 import { scheduleDocumentProgressSync } from '@/lib/client/api/user-state';
 import { getDocumentMetadata } from '@/lib/client/api/documents';
@@ -25,18 +27,13 @@ import { useAuthConfig } from '@/contexts/AuthRateLimitContext';
 import { createRangeCfi } from '@/lib/client/epub';
 import { useParams } from 'next/navigation';
 import { useConfig } from './ConfigContext';
-import { withRetry, getAudiobookStatus, createAudiobookChapter } from '@/lib/client/api/audiobooks';
 import { CmpStr } from 'cmpstr';
 import type {
   TTSSentenceAlignment,
   TTSAudiobookFormat,
   TTSAudiobookChapter,
 } from '@/types/tts';
-import type {
-  TTSRequestHeaders,
-  TTSRetryOptions,
-  AudiobookGenerationSettings,
-} from '@/types/client';
+import type { AudiobookGenerationSettings } from '@/types/client';
 
 interface EPUBContextType {
   currDocData: ArrayBuffer | undefined;
@@ -337,6 +334,11 @@ export function EPUBProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const audiobookAdapter = useMemo(() => createEpubAudiobookSourceAdapter({
+    extractBookText,
+    getTocItems: () => tocRef.current || [],
+  }), [extractBookText]);
+
   /**
    * Creates a complete audiobook by processing all text through NLP and TTS
    */
@@ -349,179 +351,23 @@ export function EPUBProvider({ children }: { children: ReactNode }) {
     settings?: AudiobookGenerationSettings
   ): Promise<string> => {
     try {
-      const sections = await extractBookText();
-      if (!sections.length) throw new Error('No text content found in book');
-
-      const effectiveProvider = settings?.ttsProvider ?? ttsProvider;
-      const effectiveFormat = settings?.format ?? format;
-
-      // Calculate total length for accurate progress tracking
-      const totalLength = sections.reduce((sum, section) => sum + section.text.trim().length, 0);
-      let processedLength = 0;
-      let bookId: string = providedBookId || '';
-
-      // Get TOC for chapter titles
-      const chapters = tocRef.current || [];
-
-      // If we have a bookId, check for existing chapters to determine which indices already exist
-      const existingIndices = new Set<number>();
-      if (bookId) {
-        try {
-          const existingData = await getAudiobookStatus(bookId);
-          if (existingData.chapters && existingData.chapters.length > 0) {
-            for (const ch of existingData.chapters) {
-              existingIndices.add(ch.index);
-            }
-            // Log smallest missing index for visibility
-            let nextMissing = 0;
-            while (existingIndices.has(nextMissing)) nextMissing++;
-            console.log(`Resuming; next missing chapter index is ${nextMissing}`);
-          }
-        } catch (error) {
-          console.error('Error checking existing chapters:', error);
-        }
-      }
-
-      // Create a map of section hrefs to their chapter titles
-      const sectionTitleMap = new Map<string, string>();
-
-      // First, loop through all chapters to create the mapping
-      for (const chapter of chapters) {
-        if (!chapter.href) continue;
-        const chapterBaseHref = chapter.href.split('#')[0];
-        const chapterTitle = chapter.label.trim();
-
-        // For each chapter, find all matching sections
-        for (const section of sections) {
-          const sectionHref = section.href;
-          const sectionBaseHref = sectionHref.split('#')[0];
-
-          // If this section matches this chapter, map it
-          if (sectionHref === chapter.href || sectionBaseHref === chapterBaseHref) {
-            sectionTitleMap.set(sectionHref, chapterTitle);
-          }
-        }
-      }
-
-      // Process each section
-      for (let i = 0; i < sections.length; i++) {
-        // Check for abort at the start of iteration
-        if (signal?.aborted) {
-          console.log('Generation cancelled by user');
-          if (bookId) {
-            return bookId; // Return bookId with partial progress
-          }
-          throw new Error('Audiobook generation cancelled');
-        }
-
-        const section = sections[i];
-        const trimmedText = section.text.trim();
-        if (!trimmedText) continue;
-
-        // Skip chapters that already exist on disk (supports non-contiguous indices)
-        if (existingIndices.has(i)) {
-          processedLength += trimmedText.length;
-          onProgress((processedLength / totalLength) * 100);
-          continue;
-        }
-
-        try {
-          const reqHeaders: TTSRequestHeaders = {
-            'Content-Type': 'application/json',
-            'x-openai-key': apiKey,
-            'x-openai-base-url': baseUrl,
-            'x-tts-provider': effectiveProvider,
-          };
-
-          // Allow one narrow client retry for transient browser->/api/audiobook/chapter transport failures.
-          // HTTP failures are not retried client-side.
-          const retryOptions: TTSRetryOptions = {
-            maxRetries: 2,
-            initialDelay: 300,
-            maxDelay: 300,
-          };
-
-          // Get the chapter title from our pre-computed map
-          let chapterTitle = sectionTitleMap.get(section.href);
-
-          // If no chapter title found, use index-based naming
-          if (!chapterTitle) {
-            chapterTitle = `Chapter ${i + 1}`;
-          }
-
-          const chapter = await withRetry(
-            async () => {
-              // Check for abort before starting chapter request
-              if (signal?.aborted) {
-                throw new DOMException('Aborted', 'AbortError');
-              }
-
-              return await createAudiobookChapter({
-                chapterTitle,
-                text: trimmedText,
-                bookId,
-                format: effectiveFormat,
-                chapterIndex: i,
-                settings
-              }, reqHeaders, signal);
-            },
-            retryOptions
-          );
-
-          // Check for abort before sending to server
-          if (signal?.aborted) {
-            console.log('Generation cancelled before saving chapter');
-            if (bookId) {
-              return bookId;
-            }
-            throw new Error('Audiobook generation cancelled');
-          }
-
-          if (!bookId) {
-            bookId = chapter.bookId!;
-          }
-
-          // Notify about completed chapter
-          if (onChapterComplete) {
-            onChapterComplete(chapter);
-          }
-
-          processedLength += trimmedText.length;
-          onProgress((processedLength / totalLength) * 100);
-
-        } catch (error) {
-          if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('cancelled'))) {
-            console.log('TTS request aborted, returning partial progress');
-            if (bookId) {
-              return bookId; // Return with partial progress
-            }
-            throw new Error('Audiobook generation cancelled');
-          }
-          console.error('Error processing section:', error);
-
-          // Notify about error
-          if (onChapterComplete) {
-            onChapterComplete({
-              index: i,
-              title: sectionTitleMap.get(section.href) || `Chapter ${i + 1}`,
-              status: 'error',
-              bookId,
-              format: effectiveFormat
-            });
-          }
-        }
-      }
-
-      if (!bookId) {
-        throw new Error('No audio was generated from the book content');
-      }
-
-      return bookId;
+      return await runAudiobookGeneration({
+        adapter: audiobookAdapter,
+        apiKey,
+        baseUrl,
+        defaultProvider: ttsProvider,
+        onProgress,
+        signal,
+        onChapterComplete,
+        providedBookId,
+        format,
+        settings,
+      });
     } catch (error) {
       console.error('Error creating audiobook:', error);
       throw error;
     }
-  }, [extractBookText, apiKey, baseUrl, ttsProvider]);
+  }, [audiobookAdapter, apiKey, baseUrl, ttsProvider]);
 
   /**
    * Regenerates a specific chapter of the audiobook
@@ -534,82 +380,17 @@ export function EPUBProvider({ children }: { children: ReactNode }) {
     settings?: AudiobookGenerationSettings
   ): Promise<TTSAudiobookChapter> => {
     try {
-      const sections = await extractBookText();
-      if (chapterIndex >= sections.length) {
-        throw new Error('Invalid chapter index');
-      }
-
-      const effectiveProvider = settings?.ttsProvider ?? ttsProvider;
-      const effectiveFormat = settings?.format ?? format;
-
-      const section = sections[chapterIndex];
-      const trimmedText = section.text.trim();
-
-      if (!trimmedText) {
-        throw new Error('No text content found in chapter');
-      }
-
-      // Get TOC for chapter title
-      const chapters = tocRef.current || [];
-      const sectionTitleMap = new Map<string, string>();
-
-      for (const chapter of chapters) {
-        if (!chapter.href) continue;
-        const chapterBaseHref = chapter.href.split('#')[0];
-        const chapterTitle = chapter.label.trim();
-
-        for (const sect of sections) {
-          const sectionHref = sect.href;
-          const sectionBaseHref = sectionHref.split('#')[0];
-
-          if (sectionHref === chapter.href || sectionBaseHref === chapterBaseHref) {
-            sectionTitleMap.set(sectionHref, chapterTitle);
-          }
-        }
-      }
-
-      const chapterTitle = sectionTitleMap.get(section.href) || `Chapter ${chapterIndex + 1}`;
-
-      // Generate audio with retry logic
-      const reqHeaders: TTSRequestHeaders = {
-        'Content-Type': 'application/json',
-        'x-openai-key': apiKey,
-        'x-openai-base-url': baseUrl,
-        'x-tts-provider': effectiveProvider,
-      };
-
-      // Allow one narrow client retry for transient browser->/api/audiobook/chapter transport failures.
-      // HTTP failures are not retried client-side.
-      const retryOptions: TTSRetryOptions = {
-        maxRetries: 2,
-        initialDelay: 300,
-        maxDelay: 300,
-      };
-
-      const chapter = await withRetry(
-        async () => {
-          if (signal?.aborted) {
-            throw new DOMException('Aborted', 'AbortError');
-          }
-
-          return await createAudiobookChapter({
-            chapterTitle,
-            text: trimmedText,
-            bookId,
-            format: effectiveFormat,
-            chapterIndex,
-            settings
-          }, reqHeaders, signal);
-        },
-        retryOptions
-      );
-
-      if (signal?.aborted) {
-        throw new Error('Chapter regeneration cancelled');
-      }
-
-      return chapter;
-
+      return await regenerateAudiobookChapter({
+        adapter: audiobookAdapter,
+        chapterIndex,
+        bookId,
+        format,
+        signal,
+        apiKey,
+        baseUrl,
+        defaultProvider: ttsProvider,
+        settings,
+      });
     } catch (error) {
       if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('cancelled'))) {
         throw new Error('Chapter regeneration cancelled');
@@ -617,7 +398,7 @@ export function EPUBProvider({ children }: { children: ReactNode }) {
       console.error('Error regenerating chapter:', error);
       throw error;
     }
-  }, [extractBookText, apiKey, baseUrl, ttsProvider]);
+  }, [audiobookAdapter, apiKey, baseUrl, ttsProvider]);
 
   const setRendition = useCallback((rendition: Rendition) => {
     bookRef.current = rendition.book;

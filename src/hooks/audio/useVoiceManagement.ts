@@ -2,8 +2,7 @@
 
 import { useState, useCallback, useRef } from 'react';
 import { getVoices } from '@/lib/client/api/audiobooks';
-
-const DEFAULT_VOICES = ['alloy', 'ash', 'coral', 'echo', 'fable', 'onyx', 'nova', 'sage', 'shimmer'];
+import { getDefaultVoices } from '@/lib/shared/tts-provider-catalog';
 
 /**
  * Custom hook for managing TTS voices
@@ -36,12 +35,11 @@ export function useVoiceManagement(
 
       // Ignore stale responses from older provider/model fetches.
       if (fetchSeq !== fetchSeqRef.current) return;
-      setAvailableVoices(data.voices || DEFAULT_VOICES);
+      setAvailableVoices(data.voices || getDefaultVoices(ttsProvider || 'openai', ttsModel || 'tts-1'));
     } catch (error) {
       console.error('Error fetching voices:', error);
       if (fetchSeq !== fetchSeqRef.current) return;
-      // Set available voices to default openai voices
-      setAvailableVoices(DEFAULT_VOICES);
+      setAvailableVoices(getDefaultVoices(ttsProvider || 'openai', ttsModel || 'tts-1'));
     }
   }, [apiKey, baseUrl, ttsProvider, ttsModel]);
 

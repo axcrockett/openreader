@@ -1,0 +1,251 @@
+import {
+  createAudiobookChapter,
+  getAudiobookStatus,
+  withRetry,
+} from '@/lib/client/api/audiobooks';
+import type {
+  AudiobookGenerationSettings,
+  TTSRequestHeaders,
+  TTSRetryOptions,
+} from '@/types/client';
+import type {
+  TTSAudiobookChapter,
+  TTSAudiobookFormat,
+} from '@/types/tts';
+
+export interface PreparedAudiobookChapter {
+  index: number;
+  title: string;
+  text: string;
+}
+
+export interface AudiobookSourceAdapter {
+  prepareChapters: () => Promise<PreparedAudiobookChapter[]>;
+  prepareChapter: (chapterIndex: number) => Promise<PreparedAudiobookChapter>;
+  noContentMessage: string;
+  noAudioGeneratedMessage: string;
+}
+
+interface RunAudiobookGenerationOptions {
+  adapter: AudiobookSourceAdapter;
+  apiKey: string;
+  baseUrl: string;
+  defaultProvider: string;
+  onProgress: (progress: number) => void;
+  signal?: AbortSignal;
+  onChapterComplete?: (chapter: TTSAudiobookChapter) => void;
+  providedBookId?: string;
+  format?: TTSAudiobookFormat;
+  settings?: AudiobookGenerationSettings;
+  retryOptions?: TTSRetryOptions;
+}
+
+interface RegenerateAudiobookChapterOptions {
+  adapter: AudiobookSourceAdapter;
+  chapterIndex: number;
+  bookId: string;
+  format: TTSAudiobookFormat;
+  signal: AbortSignal;
+  apiKey: string;
+  baseUrl: string;
+  defaultProvider: string;
+  settings?: AudiobookGenerationSettings;
+  retryOptions?: TTSRetryOptions;
+}
+
+interface ResolvedAudiobookRequestSettings {
+  effectiveProvider: string;
+  effectiveFormat: TTSAudiobookFormat;
+}
+
+function resolveAudiobookRequestSettings(
+  settings: AudiobookGenerationSettings | undefined,
+  defaultProvider: string,
+  format: TTSAudiobookFormat,
+): ResolvedAudiobookRequestSettings {
+  return {
+    effectiveProvider: settings?.ttsProvider ?? defaultProvider,
+    effectiveFormat: settings?.format ?? format,
+  };
+}
+
+function buildAudiobookRequestHeaders(
+  apiKey: string,
+  baseUrl: string,
+  effectiveProvider: string,
+): TTSRequestHeaders {
+  return {
+    'Content-Type': 'application/json',
+    'x-openai-key': apiKey,
+    'x-openai-base-url': baseUrl,
+    'x-tts-provider': effectiveProvider,
+  };
+}
+
+function isAbortLikeError(error: unknown): boolean {
+  return error instanceof Error && (error.name === 'AbortError' || error.message.includes('cancelled'));
+}
+
+export async function runAudiobookGeneration({
+  adapter,
+  apiKey,
+  baseUrl,
+  defaultProvider,
+  onProgress,
+  signal,
+  onChapterComplete,
+  providedBookId = '',
+  format = 'mp3',
+  settings,
+  retryOptions = {
+    maxRetries: 2,
+    initialDelay: 300,
+    maxDelay: 300,
+  },
+}: RunAudiobookGenerationOptions): Promise<string> {
+  const chapters = await adapter.prepareChapters();
+  const totalLength = chapters.reduce((sum, chapter) => sum + chapter.text.trim().length, 0);
+  if (totalLength === 0) {
+    throw new Error(adapter.noContentMessage);
+  }
+
+  const { effectiveProvider, effectiveFormat } = resolveAudiobookRequestSettings(settings, defaultProvider, format);
+  const reqHeaders = buildAudiobookRequestHeaders(apiKey, baseUrl, effectiveProvider);
+  let processedLength = 0;
+  let bookId = providedBookId;
+
+  const existingIndices = new Set<number>();
+  if (bookId) {
+    try {
+      const existingData = await getAudiobookStatus(bookId);
+      if (existingData.chapters && existingData.chapters.length > 0) {
+        for (const chapter of existingData.chapters) {
+          existingIndices.add(chapter.index);
+        }
+      }
+    } catch (error) {
+      console.error('Error checking existing chapters:', error);
+    }
+  }
+
+  for (const chapter of chapters) {
+    if (signal?.aborted) {
+      if (bookId) {
+        return bookId;
+      }
+      throw new Error('Audiobook generation cancelled');
+    }
+
+    const trimmedText = chapter.text.trim();
+    if (!trimmedText) {
+      continue;
+    }
+
+    if (existingIndices.has(chapter.index)) {
+      processedLength += trimmedText.length;
+      onProgress((processedLength / totalLength) * 100);
+      continue;
+    }
+
+    try {
+      const createdChapter = await withRetry(
+        async () => {
+          if (signal?.aborted) {
+            throw new DOMException('Aborted', 'AbortError');
+          }
+
+          return createAudiobookChapter({
+            chapterTitle: chapter.title,
+            text: trimmedText,
+            bookId,
+            format: effectiveFormat,
+            chapterIndex: chapter.index,
+            settings,
+          }, reqHeaders, signal);
+        },
+        retryOptions,
+      );
+
+      if (signal?.aborted) {
+        if (bookId) {
+          return bookId;
+        }
+        throw new Error('Audiobook generation cancelled');
+      }
+
+      if (!bookId) {
+        bookId = createdChapter.bookId!;
+      }
+
+      onChapterComplete?.(createdChapter);
+      processedLength += trimmedText.length;
+      onProgress((processedLength / totalLength) * 100);
+    } catch (error) {
+      if (isAbortLikeError(error)) {
+        if (bookId) {
+          return bookId;
+        }
+        throw new Error('Audiobook generation cancelled');
+      }
+
+      console.error('Error processing chapter:', error);
+      onChapterComplete?.({
+        index: chapter.index,
+        title: chapter.title,
+        status: 'error',
+        bookId,
+        format: effectiveFormat,
+      });
+    }
+  }
+
+  if (!bookId) {
+    throw new Error(adapter.noAudioGeneratedMessage);
+  }
+
+  return bookId;
+}
+
+export async function regenerateAudiobookChapter({
+  adapter,
+  chapterIndex,
+  bookId,
+  format,
+  signal,
+  apiKey,
+  baseUrl,
+  defaultProvider,
+  settings,
+  retryOptions = {
+    maxRetries: 2,
+    initialDelay: 300,
+    maxDelay: 300,
+  },
+}: RegenerateAudiobookChapterOptions): Promise<TTSAudiobookChapter> {
+  const chapter = await adapter.prepareChapter(chapterIndex);
+  const trimmedText = chapter.text.trim();
+  if (!trimmedText) {
+    throw new Error(adapter.noContentMessage);
+  }
+
+  const { effectiveProvider, effectiveFormat } = resolveAudiobookRequestSettings(settings, defaultProvider, format);
+  const reqHeaders = buildAudiobookRequestHeaders(apiKey, baseUrl, effectiveProvider);
+
+  return withRetry(
+    async () => {
+      if (signal.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
+
+      return createAudiobookChapter({
+        chapterTitle: chapter.title,
+        text: trimmedText,
+        bookId,
+        format: effectiveFormat,
+        chapterIndex,
+        settings,
+      }, reqHeaders, signal);
+    },
+    retryOptions,
+  );
+}

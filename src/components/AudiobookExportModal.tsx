@@ -11,6 +11,7 @@ import { LoadingSpinner } from '@/components/Spinner';
 import { useConfig } from '@/contexts/ConfigContext';
 import { useTTS } from '@/contexts/TTSContext';
 import { VoicesControlBase } from '@/components/player/VoicesControlBase';
+import { supportsTtsInstructions } from '@/lib/shared/tts-provider-catalog';
 import type { TTSAudiobookChapter, TTSAudiobookFormat } from '@/types/tts';
 import { 
   getAudiobookStatus, 
@@ -115,7 +116,7 @@ export function AudiobookExportModal({
       nativeSpeed,
       postSpeed,
       format,
-      ttsInstructions: ttsModel === 'gpt-4o-mini-tts' ? ttsInstructions : undefined,
+      ttsInstructions: supportsTtsInstructions(ttsModel) ? ttsInstructions : undefined,
     };
   }, [savedSettings, audiobookVoice, configVoice, availableVoices, ttsProvider, ttsModel, ttsInstructions, nativeSpeed, postSpeed, format]);
 

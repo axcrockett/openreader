@@ -39,6 +39,7 @@ import { getDocumentProgress, scheduleDocumentProgressSync } from '@/lib/client/
 import { withRetry, generateTTS, alignAudio } from '@/lib/client/api/audiobooks';
 import { preprocessSentenceForAudio, splitTextToTtsBlocks, splitTextToTtsBlocksEPUB } from '@/lib/shared/nlp';
 import { isKokoroModel } from '@/lib/shared/kokoro';
+import { supportsTtsInstructions } from '@/lib/shared/tts-provider-catalog';
 import { useAuthRateLimit } from '@/contexts/AuthRateLimitContext';
 import type {
   TTSLocation,
@@ -1099,7 +1100,7 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
         speed,
         format: 'mp3',
         model: ttsModel,
-        instructions: ttsModel === 'gpt-4o-mini-tts' ? ttsInstructions : undefined,
+        instructions: supportsTtsInstructions(ttsModel) ? ttsInstructions : undefined,
       };
 
       // Allow one narrow client retry for transient browser->/api/tts transport failures.
