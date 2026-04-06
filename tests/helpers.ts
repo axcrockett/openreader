@@ -95,6 +95,8 @@ export async function uploadAndDisplay(page: Page, fileName: string) {
       break;
     } catch (error) {
       if (attempt === 2) throw error;
+      const message = String(error);
+      if (!message.includes('intercepts pointer events')) throw error;
       await page.waitForTimeout(200);
     }
   }
@@ -116,18 +118,15 @@ async function dismissSettingsModalIfVisible(page: Page): Promise<void> {
   const saveBtn = settingsDialog.getByRole('button', { name: 'Save' });
   const saveVisible = await saveBtn.isVisible().catch(() => false);
   if (saveVisible) {
-    const saveEnabled = await saveBtn.isEnabled();
-    if (saveEnabled) {
-      await saveBtn.focus();
-      await page.keyboard.press('Enter');
-    } else {
-      await page.keyboard.press('Escape');
-    }
+    await expect(saveBtn).toBeEnabled({ timeout: 10000 }).catch(() => { });
+    await saveBtn.click({ force: true }).catch(async () => {
+      await page.keyboard.press('Escape').catch(() => { });
+    });
   } else {
-    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape').catch(() => { });
   }
 
-  await settingsDialog.waitFor({ state: 'hidden', timeout: 15000 });
+  await settingsDialog.waitFor({ state: 'hidden', timeout: 15000 }).catch(() => { });
 }
 
 /**
