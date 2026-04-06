@@ -96,7 +96,7 @@ export function PrivacyModal({ onAccept }: PrivacyModalProps) {
               leaveFrom="opacity-100 scale-100"
               leaveTo="opacity-0 scale-95"
             >
-              <DialogPanel className="w-full max-w-md transform rounded-2xl bg-base p-6 text-left align-middle shadow-xl transition-all">
+              <DialogPanel data-testid="privacy-modal" className="w-full max-w-md transform rounded-2xl bg-base p-6 text-left align-middle shadow-xl transition-all">
                 <DialogTitle
                   as="h3"
                   className="text-lg font-semibold leading-6 text-foreground"
@@ -110,6 +110,7 @@ export function PrivacyModal({ onAccept }: PrivacyModalProps) {
                   <div className="flex items-start gap-3 rounded-lg border border-offbase p-3 bg-offbase/20">
                     <div className="flex h-6 items-center">
                       <input
+                        data-testid="privacy-agree-checkbox"
                         id="privacy-agree"
                         type="checkbox"
                         checked={agreed}
@@ -129,6 +130,7 @@ export function PrivacyModal({ onAccept }: PrivacyModalProps) {
 
                   <div className="flex justify-end">
                     <Button
+                      data-testid="privacy-continue-button"
                       type="button"
                       disabled={!agreed}
                       className="inline-flex justify-center rounded-lg bg-accent px-4 py-2 text-sm 

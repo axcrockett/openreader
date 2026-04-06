@@ -197,7 +197,7 @@ export function DexieMigrationModal() {
               leaveFrom="opacity-100 scale-100"
               leaveTo="opacity-0 scale-95"
             >
-              <DialogPanel className="w-full max-w-md transform rounded-2xl bg-base p-6 text-left align-middle shadow-xl transition-all">
+              <DialogPanel data-testid="migration-modal" className="w-full max-w-md transform rounded-2xl bg-base p-6 text-left align-middle shadow-xl transition-all">
                 <DialogTitle as="h3" className="text-lg font-semibold leading-6 text-foreground mb-4">
                   {title}
                 </DialogTitle>
@@ -222,6 +222,7 @@ export function DexieMigrationModal() {
 
                 <div className="flex justify-end gap-3 mt-6">
                   <Button
+                    data-testid="migration-skip-button"
                     onClick={handleSkip}
                     disabled={isUploading}
                     className="inline-flex justify-center rounded-lg bg-background px-3 py-1.5 text-sm 

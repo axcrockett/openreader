@@ -405,7 +405,7 @@ export function SettingsModal({ className = '' }: { className?: string }) {
                 leaveFrom="opacity-100 scale-100"
                 leaveTo="opacity-0 scale-95"
               >
-                <DialogPanel className="w-full max-w-3xl transform rounded-2xl bg-base text-left align-middle shadow-xl transition-all overflow-hidden">
+                <DialogPanel data-testid="settings-modal" className="w-full max-w-3xl transform rounded-2xl bg-base text-left align-middle shadow-xl transition-all overflow-hidden">
                   {/* Header */}
                   <div className="flex items-center justify-between px-6 py-4 border-b border-offbase">
                     <DialogTitle as="h3" className="text-lg font-semibold leading-6 text-foreground">
@@ -660,6 +660,7 @@ export function SettingsModal({ className = '' }: { className?: string }) {
                               Reset
                             </Button>
                             <Button
+                              data-testid="settings-save-button"
                               type="button"
                               className={`${btnPrimary} px-4 py-2`}
                               disabled={!canSubmit}
