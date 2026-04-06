@@ -82,12 +82,23 @@ export async function uploadAndDisplay(page: Page, fileName: string) {
     const expectedId = sha256HexOfFile(fixturePath(fileName));
     const targetLink = page.locator(`a[href$="/pdf/${expectedId}"]`).first();
     await expect(targetLink).toBeVisible({ timeout: 15000 });
+    await dismissOnboardingModals(page);
     await targetLink.click();
     await page.waitForSelector('.react-pdf__Document', { timeout: 15000 });
     return;
   }
 
-  await page.getByRole('link', { name: new RegExp(escapeRegExp(fileName), 'i') }).first().click();
+  const targetLink = page.getByRole('link', { name: new RegExp(escapeRegExp(fileName), 'i') }).first();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await dismissOnboardingModals(page);
+    try {
+      await targetLink.click({ timeout: 10000 });
+      break;
+    } catch (error) {
+      if (attempt === 2) throw error;
+      await page.waitForTimeout(200);
+    }
+  }
 
   if (lower.endsWith('.pdf')) {
     await page.waitForSelector('.react-pdf__Document', { timeout: 10000 });
@@ -95,6 +106,60 @@ export async function uploadAndDisplay(page: Page, fileName: string) {
     await page.waitForSelector('.epub-container', { timeout: 10000 });
   } else if (lower.endsWith('.txt') || lower.endsWith('.md')) {
     await page.waitForSelector('.html-container', { timeout: 10000 });
+  }
+}
+
+async function dismissOnboardingModals(page: Page): Promise<void> {
+  const privacyDialog = page.getByTestId('privacy-modal');
+  const migrationDialog = page.getByTestId('migration-modal');
+  const settingsDialog = page.getByTestId('settings-modal');
+
+  const maxSteps = 12;
+  const settleChecks = 3;
+  let settledWithoutDialog = 0;
+
+  for (let step = 0; step < maxSteps; step += 1) {
+    if (await privacyDialog.isVisible().catch(() => false)) {
+      const privacyAgree = page.getByTestId('privacy-agree-checkbox');
+      if (await privacyAgree.isVisible().catch(() => false)) {
+        if (!(await privacyAgree.isChecked())) {
+          await privacyAgree.check();
+        }
+      }
+      const continueBtn = page.getByTestId('privacy-continue-button');
+      await expect(continueBtn).toBeEnabled({ timeout: 10000 });
+      await continueBtn.click();
+      await privacyDialog.waitFor({ state: 'hidden', timeout: 15000 });
+      await page.waitForTimeout(100);
+      settledWithoutDialog = 0;
+      continue;
+    }
+
+    if (await migrationDialog.isVisible().catch(() => false)) {
+      const skipBtn = page.getByTestId('migration-skip-button');
+      await expect(skipBtn).toBeEnabled({ timeout: 10000 });
+      await skipBtn.click();
+      await migrationDialog.waitFor({ state: 'hidden', timeout: 15000 });
+      await page.waitForTimeout(100);
+      settledWithoutDialog = 0;
+      continue;
+    }
+
+    if (await settingsDialog.isVisible().catch(() => false)) {
+      const saveBtn = page.getByTestId('settings-save-button');
+      await expect(saveBtn).toBeEnabled({ timeout: 15000 });
+      await saveBtn.click();
+      await settingsDialog.waitFor({ state: 'hidden', timeout: 15000 });
+      await page.waitForTimeout(100);
+      settledWithoutDialog = 0;
+      continue;
+    }
+
+    settledWithoutDialog += 1;
+    if (settledWithoutDialog >= settleChecks) {
+      return;
+    }
+    await page.waitForTimeout(150);
   }
 }
 
@@ -206,58 +271,14 @@ export async function setupTest(page: Page, testInfo?: TestInfo) {
     .waitForSelector('.fixed.inset-0.bg-base.z-50', { state: 'detached', timeout: 15_000 })
     .catch(() => { });
 
-  // Privacy modal should come first in onboarding.
-  // Be tolerant if it's already accepted (e.g., reused context).
-  const privacyBtn = page.getByRole('button', { name: /Continue|I Understand/i });
-  try {
-    await expect(privacyBtn).toBeVisible({ timeout: 5000 });
-    const privacyAgree = page.locator('#privacy-agree');
-    if ((await privacyAgree.count()) > 0) {
-      await privacyAgree.check();
-    }
-    await expect(privacyBtn).toBeEnabled({ timeout: 5000 });
-    await privacyBtn.click();
-    // HeadlessUI keeps dialogs in the DOM during leave transitions; "hidden" is enough
-    // (we mainly need to ensure it no longer blocks pointer events).
-    await page.getByRole('dialog', { name: /privacy/i }).waitFor({ state: 'hidden', timeout: 15000 });
-  } catch {
-    // ignore
-  }
-
   // Fallback: if the banner still appears, dismiss it before continuing.
   const cookieAcceptBtn = page.getByRole('button', { name: 'Accept All' });
   if (await cookieAcceptBtn.isVisible().catch(() => false)) {
     await cookieAcceptBtn.click();
   }
 
-  // Settings modal should appear on first visit. In non-auth mode there is no
-  // privacy modal, so open Settings explicitly if onboarding did not auto-open.
-  const settingsDialog = page.getByRole('dialog', { name: 'Settings' });
-  const saveBtn = settingsDialog.getByRole('button', { name: 'Save' });
-
-  // On some local runs, Settings opens automatically but the Save button is not yet
-  // visible during enter transition. Prefer waiting for it before trying to click.
-  await saveBtn.waitFor({ state: 'visible', timeout: 2500 }).catch(async () => {
-    const settingsBtn = page.getByRole('button', { name: 'Settings' });
-    if (await settingsBtn.isVisible().catch(() => false)) {
-      // Force avoids occasional pointer interception by in-flight dialog overlays.
-      await settingsBtn.click({ force: true });
-    }
-  });
-
-  await expect(saveBtn).toBeVisible({ timeout: 10000 });
-  // SettingsModal can briefly disable Save while it mirrors a custom model into the input field.
-  await expect(saveBtn).toBeEnabled({ timeout: 15000 });
-
-  // If running in CI, select the "Custom OpenAI-Like" model and "Deepinfra" provider
-  if (process.env.CI) {
-    await page.getByRole('button', { name: 'Custom OpenAI-Like' }).click();
-    await page.getByText('Deepinfra').click();
-  }
-
-  // Click the "done" button to dismiss the welcome message
-  await saveBtn.click();
-  await settingsDialog.waitFor({ state: 'hidden', timeout: 15000 });
+  // Close first-run dialogs (when present). These do not always appear.
+  await dismissOnboardingModals(page);
 }
 
 /**

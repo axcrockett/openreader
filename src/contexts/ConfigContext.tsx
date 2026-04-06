@@ -8,6 +8,8 @@ import { scheduleUserPreferencesSync, cancelPendingPreferenceSync, getUserPrefer
 import { SYNCED_PREFERENCE_KEYS, type SyncedPreferenceKey, type SyncedPreferencesPatch } from '@/types/user-state';
 import { useAuthSession } from '@/hooks/useAuthSession';
 import { useAuthConfig } from '@/contexts/AuthRateLimitContext';
+import { buildSyncedPreferencePatch } from '@/lib/client/config/preferences';
+import { applyConfigUpdate } from '@/lib/client/config/updates';
 import toast from 'react-hot-toast';
 export type { ViewType } from '@/types/config';
 
@@ -61,9 +63,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const { data: sessionData, isPending: isSessionPending } = useAuthSession();
   const sessionKey = sessionData?.user?.id ?? 'no-session';
 
-  // Helper function to generate provider-model key
-  const getVoiceKey = (provider: string, model: string) => `${provider}:${model}`;
-
   const queueSyncedPreferencePatch = useCallback((patch: Partial<AppConfigValues>) => {
     if (!authEnabled || sessionKey === 'no-session') return;
 
@@ -84,28 +83,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       cancelPendingPreferenceSync();
     };
   }, [sessionKey]);
-
-  const buildSyncedPreferencePatch = useCallback((
-    source: Partial<AppConfigValues>,
-    options?: { nonDefaultOnly?: boolean },
-  ): SyncedPreferencesPatch => {
-    const out: SyncedPreferencesPatch = {};
-    for (const key of SYNCED_PREFERENCE_KEYS) {
-      if (!(key in source)) continue;
-      const value = source[key];
-      if (value === undefined) continue;
-      if (options?.nonDefaultOnly) {
-        const defaultValue = APP_CONFIG_DEFAULTS[key];
-        const same =
-          typeof value === 'object'
-            ? JSON.stringify(value) === JSON.stringify(defaultValue)
-            : value === defaultValue;
-        if (same) continue;
-      }
-      (out as Record<SyncedPreferenceKey, unknown>)[key] = value;
-    }
-    return out;
-  }, []);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -280,7 +257,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     });
 
     return () => controller.abort();
-  }, [isDBReady, authEnabled, appConfig, buildSyncedPreferencePatch, isSessionPending, sessionKey]);
+  }, [isDBReady, authEnabled, appConfig, isSessionPending, sessionKey]);
 
   // Destructure for convenience and to match context shape
   const {
@@ -342,53 +319,21 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const updateConfigKey = async <K extends keyof AppConfigValues>(key: K, value: AppConfigValues[K]) => {
     try {
       setIsLoading(true);
+      const { storagePatch, syncPatch } = applyConfigUpdate({
+        ttsProvider,
+        ttsModel,
+        savedVoices,
+      }, key, value);
 
-      // Special handling for voice - only update savedVoices
-      if (key === 'voice') {
-        const voiceKey = getVoiceKey(ttsProvider, ttsModel);
-        const updatedSavedVoices = { ...savedVoices, [voiceKey]: value as string };
-        await updateAppConfig({
-          savedVoices: updatedSavedVoices,
-          voice: value as string,
-        });
-        queueSyncedPreferencePatch({
-          savedVoices: updatedSavedVoices,
-          voice: value as string,
-        });
-      }
-      // Special handling for provider/model changes - restore saved voice if available
-      else if (key === 'ttsProvider' || key === 'ttsModel') {
-        const newProvider = key === 'ttsProvider' ? (value as string) : ttsProvider;
-        const newModel = key === 'ttsModel' ? (value as string) : ttsModel;
-        const voiceKey = getVoiceKey(newProvider, newModel);
-        const restoredVoice = savedVoices[voiceKey] || '';
-        await updateAppConfig({
-          [key]: value as AppConfigValues[keyof AppConfigValues],
-          voice: restoredVoice,
-        } as Partial<AppConfigRow>);
-        queueSyncedPreferencePatch({
-          [key]: value as AppConfigValues[keyof AppConfigValues],
-          voice: restoredVoice,
-        } as Partial<AppConfigValues>);
-      }
-      else if (key === 'savedVoices') {
-        const newSavedVoices = value as SavedVoices;
-        await updateAppConfig({
-          savedVoices: newSavedVoices,
-        });
-        queueSyncedPreferencePatch({
-          savedVoices: newSavedVoices,
-        });
-      }
-      else {
-        await updateAppConfig({
-          [key]: value as AppConfigValues[keyof AppConfigValues],
-        } as Partial<AppConfigRow>);
-        if (syncedPreferenceKeys.has(String(key))) {
-          queueSyncedPreferencePatch({
-            [key]: value,
-          } as Partial<AppConfigValues>);
-        }
+      await updateAppConfig(storagePatch);
+      if (
+        key === 'voice' ||
+        key === 'ttsProvider' ||
+        key === 'ttsModel' ||
+        key === 'savedVoices' ||
+        syncedPreferenceKeys.has(String(key))
+      ) {
+        queueSyncedPreferencePatch(syncPatch);
       }
     } catch (error) {
       console.error(`Error updating config key ${String(key)}:`, error);

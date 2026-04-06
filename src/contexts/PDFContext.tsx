@@ -28,11 +28,11 @@ import {
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 import { getDocumentMetadata } from '@/lib/client/api/documents';
+import { createPdfAudiobookSourceAdapter } from '@/lib/client/audiobooks/adapters/pdf';
+import { regenerateAudiobookChapter, runAudiobookGeneration } from '@/lib/client/audiobooks/pipeline';
 import { ensureCachedDocument } from '@/lib/client/cache/documents';
 import { useTTS } from '@/contexts/TTSContext';
 import { useConfig } from '@/contexts/ConfigContext';
-import { normalizeTextForTts } from '@/lib/shared/nlp';
-import { withRetry, getAudiobookStatus, createAudiobookChapter } from '@/lib/client/api/audiobooks';
 import {
   extractTextFromPDF,
   highlightPattern,
@@ -46,11 +46,7 @@ import type {
   TTSAudiobookFormat,
   TTSAudiobookChapter,
 } from '@/types/tts';
-import type {
-  TTSRequestHeaders,
-  TTSRetryOptions,
-  AudiobookGenerationSettings,
-} from '@/types/client';
+import type { AudiobookGenerationSettings } from '@/types/client';
 
 /**
  * Interface defining all available methods and properties in the PDF context
@@ -139,6 +135,16 @@ export function PDFProvider({ children }: { children: ReactNode }) {
   const [currDocText, setCurrDocText] = useState<string>();
   const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy>();
   const [isAudioCombining] = useState(false);
+  const audiobookAdapter = useMemo(() => createPdfAudiobookSourceAdapter({
+    pdfDocument,
+    margins: {
+      header: headerMargin,
+      footer: footerMargin,
+      left: leftMargin,
+      right: rightMargin,
+    },
+    smartSentenceSplitting,
+  }), [pdfDocument, headerMargin, footerMargin, leftMargin, rightMargin, smartSentenceSplitting]);
   const pageTextCacheRef = useRef<Map<number, string>>(new Map());
   const [currDocPage, setCurrDocPage] = useState<number>(currDocPageNumber);
 
@@ -409,169 +415,23 @@ export function PDFProvider({ children }: { children: ReactNode }) {
     settings?: AudiobookGenerationSettings
   ): Promise<string> => {
     try {
-      if (!pdfDocument) {
-        throw new Error('No PDF document loaded');
-      }
-
-      const effectiveProvider = settings?.ttsProvider ?? ttsProvider;
-      const effectiveFormat = settings?.format ?? format;
-
-      // First pass: extract and measure all text
-      const textPerPage: string[] = [];
-      let totalLength = 0;
-
-      for (let pageNum = 1; pageNum <= pdfDocument.numPages; pageNum++) {
-        const rawText = await extractTextFromPDF(pdfDocument, pageNum, {
-          header: headerMargin,
-          footer: footerMargin,
-          left: leftMargin,
-          right: rightMargin
-        });
-        const trimmedText = rawText.trim();
-        if (trimmedText) {
-          const processedText = smartSentenceSplitting ? normalizeTextForTts(trimmedText) : trimmedText;
-
-          textPerPage.push(processedText);
-          totalLength += processedText.length;
-        }
-      }
-
-      if (totalLength === 0) {
-        throw new Error('No text content found in PDF');
-      }
-
-      let processedLength = 0;
-      let bookId: string = providedBookId || '';
-
-      // If we have a bookId, check for existing chapters to determine which indices already exist
-      const existingIndices = new Set<number>();
-      if (bookId) {
-        try {
-          const existingData = await getAudiobookStatus(bookId);
-          if (existingData.chapters && existingData.chapters.length > 0) {
-            for (const ch of existingData.chapters) {
-              existingIndices.add(ch.index);
-            }
-            let nextMissing = 0;
-            while (existingIndices.has(nextMissing)) nextMissing++;
-            console.log(`Resuming; next missing page index is ${nextMissing} (page ${nextMissing + 1})`);
-          }
-        } catch (error) {
-          console.error('Error checking existing chapters:', error);
-        }
-      }
-
-      // Second pass: process text into audio
-      for (let i = 0; i < textPerPage.length; i++) {
-        // Check for abort at the start of iteration
-        if (signal?.aborted) {
-          console.log('Generation cancelled by user');
-          if (bookId) {
-            return bookId; // Return bookId with partial progress
-          }
-          throw new Error('Audiobook generation cancelled');
-        }
-
-        const text = textPerPage[i];
-
-        // Skip pages that already exist on disk (supports non-contiguous indices)
-        if (existingIndices.has(i)) {
-          processedLength += text.length;
-          onProgress((processedLength / totalLength) * 100);
-          continue;
-        }
-
-        const reqHeaders: TTSRequestHeaders = {
-          'Content-Type': 'application/json',
-          'x-openai-key': apiKey,
-          'x-openai-base-url': baseUrl,
-          'x-tts-provider': effectiveProvider,
-        };
-
-        // Allow one narrow client retry for transient browser->/api/audiobook/chapter transport failures.
-        // HTTP failures are not retried client-side.
-        const retryOptions: TTSRetryOptions = {
-          maxRetries: 2,
-          initialDelay: 300,
-          maxDelay: 300,
-        };
-
-        try {
-          const chapterTitle = `Page ${i + 1}`;
-
-          const chapter = await withRetry(
-            async () => {
-              // Check for abort before starting chapter request
-              if (signal?.aborted) {
-                throw new DOMException('Aborted', 'AbortError');
-              }
-
-              return await createAudiobookChapter({
-                chapterTitle,
-                text,
-                bookId,
-                format: effectiveFormat,
-                chapterIndex: i,
-                settings
-              }, reqHeaders, signal);
-            },
-            retryOptions
-          );
-
-          // Check for abort before sending to server
-          if (signal?.aborted) {
-            console.log('Generation cancelled before saving page');
-            if (bookId) {
-              return bookId;
-            }
-            throw new Error('Audiobook generation cancelled');
-          }
-
-          if (!bookId) {
-            bookId = chapter.bookId!;
-          }
-
-          // Notify about completed chapter
-          if (onChapterComplete) {
-            onChapterComplete(chapter);
-          }
-
-          processedLength += text.length;
-          onProgress((processedLength / totalLength) * 100);
-
-        } catch (error) {
-          if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('cancelled'))) {
-            console.log('TTS request aborted, returning partial progress');
-            if (bookId) {
-              return bookId; // Return with partial progress
-            }
-            throw new Error('Audiobook generation cancelled');
-          }
-          console.error('Error processing page:', error);
-
-          // Notify about error
-          if (onChapterComplete) {
-            onChapterComplete({
-              index: i,
-              title: `Page ${i + 1}`,
-              status: 'error',
-              bookId,
-              format: effectiveFormat
-            });
-          }
-        }
-      }
-
-      if (!bookId) {
-        throw new Error('No audio was generated from the PDF content');
-      }
-
-      return bookId;
+      return await runAudiobookGeneration({
+        adapter: audiobookAdapter,
+        apiKey,
+        baseUrl,
+        defaultProvider: ttsProvider,
+        onProgress,
+        signal,
+        onChapterComplete,
+        providedBookId,
+        format,
+        settings,
+      });
     } catch (error) {
       console.error('Error creating audiobook:', error);
       throw error;
     }
-  }, [pdfDocument, headerMargin, footerMargin, leftMargin, rightMargin, apiKey, baseUrl, ttsProvider, smartSentenceSplitting]);
+  }, [audiobookAdapter, apiKey, baseUrl, ttsProvider]);
 
   /**
    * Regenerates a specific chapter (page) of the PDF audiobook
@@ -584,94 +444,17 @@ export function PDFProvider({ children }: { children: ReactNode }) {
     settings?: AudiobookGenerationSettings
   ): Promise<TTSAudiobookChapter> => {
     try {
-      if (!pdfDocument) {
-        throw new Error('No PDF document loaded');
-      }
-
-      const effectiveProvider = settings?.ttsProvider ?? ttsProvider;
-      const effectiveFormat = settings?.format ?? format;
-
-      // IMPORTANT: Chapter indices are based on non-empty pages used during generation.
-      // Build a mapping of "chapterIndex" -> actual PDF page number (1-based).
-      const nonEmptyPages: number[] = [];
-      for (let page = 1; page <= pdfDocument.numPages; page++) {
-        const pageText = await extractTextFromPDF(pdfDocument, page, {
-          header: headerMargin,
-          footer: footerMargin,
-          left: leftMargin,
-          right: rightMargin
-        });
-        if (pageText.trim()) {
-          nonEmptyPages.push(page);
-        }
-      }
-
-      if (chapterIndex < 0 || chapterIndex >= nonEmptyPages.length) {
-        throw new Error('Invalid chapter index');
-      }
-
-      const pageNum = nonEmptyPages[chapterIndex];
-
-      // Extract text from the mapped page
-      const rawText = await extractTextFromPDF(pdfDocument, pageNum, {
-        header: headerMargin,
-        footer: footerMargin,
-        left: leftMargin,
-        right: rightMargin
+      return await regenerateAudiobookChapter({
+        adapter: audiobookAdapter,
+        chapterIndex,
+        bookId,
+        format,
+        signal,
+        apiKey,
+        baseUrl,
+        defaultProvider: ttsProvider,
+        settings,
       });
-
-      const trimmedText = rawText.trim();
-      if (!trimmedText) {
-        throw new Error('No text content found on page');
-      }
-
-      const textForTTS = smartSentenceSplitting
-        ? normalizeTextForTts(trimmedText)
-        : trimmedText;
-
-      // Use logical chapter numbering (index + 1) to match original generation titles
-      const chapterTitle = `Page ${chapterIndex + 1}`;
-
-      // Generate audio with retry logic
-      const reqHeaders: TTSRequestHeaders = {
-        'Content-Type': 'application/json',
-        'x-openai-key': apiKey,
-        'x-openai-base-url': baseUrl,
-        'x-tts-provider': effectiveProvider,
-      };
-
-      // Allow one narrow client retry for transient browser->/api/audiobook/chapter transport failures.
-      // HTTP failures are not retried client-side.
-      const retryOptions: TTSRetryOptions = {
-        maxRetries: 2,
-        initialDelay: 300,
-        maxDelay: 300,
-      };
-
-      const chapter = await withRetry(
-        async () => {
-          if (signal?.aborted) {
-            throw new DOMException('Aborted', 'AbortError');
-          }
-
-          return await createAudiobookChapter({
-            chapterTitle,
-            text: textForTTS,
-            bookId,
-            format: effectiveFormat,
-            chapterIndex,
-            settings
-          }, reqHeaders, signal);
-        },
-        retryOptions
-      );
-
-      if (signal?.aborted) {
-        throw new Error('Page regeneration cancelled');
-      }
-
-      return chapter;
-
     } catch (error) {
       if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('cancelled'))) {
         throw new Error('Page regeneration cancelled');
@@ -679,7 +462,7 @@ export function PDFProvider({ children }: { children: ReactNode }) {
       console.error('Error regenerating page:', error);
       throw error;
     }
-  }, [pdfDocument, headerMargin, footerMargin, leftMargin, rightMargin, apiKey, baseUrl, ttsProvider, smartSentenceSplitting]);
+  }, [audiobookAdapter, apiKey, baseUrl, ttsProvider]);
 
   /**
    * Effect hook to initialize TTS as non-EPUB mode
