@@ -109,6 +109,26 @@ async function expectChaptersBackendState(page: Page, bookId: string) {
   return json;
 }
 
+async function waitForBackendDownloadReady(
+  page: Page,
+  bookId: string,
+  { minChapters = 1, timeoutMs = 120_000 }: { minChapters?: number; timeoutMs?: number } = {}
+) {
+  await expect
+    .poll(async () => {
+      const json = await expectChaptersBackendState(page, bookId);
+      if (!json?.exists) return false;
+      if (!Array.isArray(json?.chapters)) return false;
+      if (json.chapters.length < minChapters) return false;
+      return json.chapters.every((chapter: { duration?: number }) => Number(chapter.duration ?? 0) > 0);
+    }, { timeout: timeoutMs })
+    .toBe(true);
+
+  const fullDownloadButton = page.getByRole('button', { name: /Full Download/i });
+  await expect(fullDownloadButton).toBeVisible({ timeout: timeoutMs });
+  await expect(fullDownloadButton).toBeEnabled({ timeout: timeoutMs });
+}
+
 async function withDownloadedFullAudiobook<T>(
   page: Page,
   fn: (args: { filePath: string; suggestedFilename: string }) => Promise<T>,
@@ -311,6 +331,9 @@ test('exports a single MP3 audiobook PDF page via chapters menu', async ({ page 
   const chapterActionsButtons = page.getByRole('button', { name: 'Chapter actions' });
   await expect(chapterActionsButtons.first()).toBeVisible({ timeout: 90_000 });
 
+  // Readiness gate: chapter row visibility can lead backend storage consistency by a small window.
+  await waitForBackendDownloadReady(page, bookId, { minChapters: 1 });
+
   // Download via frontend button
   await withDownloadedFullAudiobook(page, async ({ filePath }) => {
     const durationSeconds = await getAudioDurationSeconds(filePath);
@@ -491,6 +514,9 @@ test('resumes audiobook when a chapter is missing and full download succeeds (PD
 
   // UI should also stop showing a missing placeholder after resume completes.
   await expect(page.getByText(/Missing •/)).toHaveCount(0, { timeout: 120_000 });
+
+  // Ensure backend chapter metadata/object visibility is settled before combine/download.
+  await waitForBackendDownloadReady(page, bookId, { minChapters: 2 });
 
   await withDownloadedFullAudiobook(page, async ({ filePath }) => {
     const durationSeconds = await getAudioDurationSeconds(filePath);

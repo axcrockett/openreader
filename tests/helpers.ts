@@ -87,7 +87,19 @@ export async function uploadAndDisplay(page: Page, fileName: string) {
     return;
   }
 
-  await page.getByRole('link', { name: new RegExp(escapeRegExp(fileName), 'i') }).first().click();
+  const targetLink = page.getByRole('link', { name: new RegExp(escapeRegExp(fileName), 'i') }).first();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await dismissSettingsModalIfVisible(page);
+    try {
+      await targetLink.click({ timeout: 10000 });
+      break;
+    } catch (error) {
+      if (attempt === 2) throw error;
+      const message = String(error);
+      if (!message.includes('intercepts pointer events')) throw error;
+      await page.waitForTimeout(200);
+    }
+  }
 
   if (lower.endsWith('.pdf')) {
     await page.waitForSelector('.react-pdf__Document', { timeout: 10000 });
@@ -96,6 +108,25 @@ export async function uploadAndDisplay(page: Page, fileName: string) {
   } else if (lower.endsWith('.txt') || lower.endsWith('.md')) {
     await page.waitForSelector('.html-container', { timeout: 10000 });
   }
+}
+
+async function dismissSettingsModalIfVisible(page: Page): Promise<void> {
+  const settingsDialog = page.getByRole('dialog', { name: 'Settings' });
+  const visible = await settingsDialog.isVisible().catch(() => false);
+  if (!visible) return;
+
+  const saveBtn = settingsDialog.getByRole('button', { name: 'Save' });
+  const saveVisible = await saveBtn.isVisible().catch(() => false);
+  if (saveVisible) {
+    await expect(saveBtn).toBeEnabled({ timeout: 10000 }).catch(() => { });
+    await saveBtn.click({ force: true }).catch(async () => {
+      await page.keyboard.press('Escape').catch(() => { });
+    });
+  } else {
+    await page.keyboard.press('Escape').catch(() => { });
+  }
+
+  await settingsDialog.waitFor({ state: 'hidden', timeout: 15000 }).catch(() => { });
 }
 
 /**

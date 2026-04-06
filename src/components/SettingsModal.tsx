@@ -147,12 +147,15 @@ export function SettingsModal({ className = '' }: { className?: string }) {
     checkFirstVist().catch((err) => {
       console.error('First visit check failed:', err);
     });
+  }, [checkFirstVist]);
+
+  useEffect(() => {
     setLocalApiKey(apiKey);
     setLocalBaseUrl(baseUrl);
     setLocalTTSProvider(ttsProvider);
     setModelValue(ttsModel);
     setLocalTTSInstructions(ttsInstructions);
-  }, [apiKey, baseUrl, ttsProvider, ttsModel, ttsInstructions, checkFirstVist]);
+  }, [apiKey, baseUrl, ttsProvider, ttsModel, ttsInstructions]);
 
   useEffect(() => {
     if (!authEnabled) {
