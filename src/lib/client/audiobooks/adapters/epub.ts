@@ -23,7 +23,8 @@ async function buildPreparedEpubChapters({
   for (const chapter of chapters) {
     if (!chapter.href) continue;
     const chapterBaseHref = chapter.href.split('#')[0];
-    const chapterTitle = chapter.label.trim();
+    const chapterTitle = typeof chapter.label === 'string' ? chapter.label.trim() : '';
+    if (!chapterTitle) continue;
 
     for (const section of sections) {
       const sectionBaseHref = section.href.split('#')[0];
@@ -41,12 +42,24 @@ async function buildPreparedEpubChapters({
 }
 
 export function createEpubAudiobookSourceAdapter(options: EpubAudiobookAdapterOptions): AudiobookSourceAdapter {
+  let preparedChaptersPromise: Promise<PreparedAudiobookChapter[]> | null = null;
+
+  const getPreparedChapters = () => {
+    if (!preparedChaptersPromise) {
+      preparedChaptersPromise = buildPreparedEpubChapters(options).catch((error) => {
+        preparedChaptersPromise = null;
+        throw error;
+      });
+    }
+    return preparedChaptersPromise;
+  };
+
   return {
     noContentMessage: 'No text content found in book',
     noAudioGeneratedMessage: 'No audio was generated from the book content',
-    prepareChapters: async () => buildPreparedEpubChapters(options),
+    prepareChapters: async () => getPreparedChapters(),
     prepareChapter: async (chapterIndex: number) => {
-      const chapters = await buildPreparedEpubChapters(options);
+      const chapters = await getPreparedChapters();
       const chapter = chapters[chapterIndex];
       if (!chapter) {
         throw new Error('Invalid chapter index');

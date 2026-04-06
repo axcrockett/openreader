@@ -257,7 +257,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     });
 
     return () => controller.abort();
-  }, [isDBReady, authEnabled, appConfig, buildSyncedPreferencePatch, isSessionPending, sessionKey]);
+  }, [isDBReady, authEnabled, appConfig, isSessionPending, sessionKey]);
 
   // Destructure for convenience and to match context shape
   const {
@@ -326,9 +326,13 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       }, key, value);
 
       await updateAppConfig(storagePatch);
-      if (key === 'voice' || key === 'ttsProvider' || key === 'ttsModel' || key === 'savedVoices') {
-        queueSyncedPreferencePatch(syncPatch);
-      } else if (syncedPreferenceKeys.has(String(key))) {
+      if (
+        key === 'voice' ||
+        key === 'ttsProvider' ||
+        key === 'ttsModel' ||
+        key === 'savedVoices' ||
+        syncedPreferenceKeys.has(String(key))
+      ) {
         queueSyncedPreferencePatch(syncPatch);
       }
     } catch (error) {

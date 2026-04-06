@@ -167,13 +167,21 @@ export function resolveVoiceSource(provider: string, model: string): TtsVoiceSou
 }
 
 async function fetchDeepinfraVoices(apiKey: string): Promise<string[]> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, 10_000);
+
   try {
     const response = await fetch('https://api.deepinfra.com/v1/voices', {
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
       },
     });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       throw new Error('Failed to fetch Deepinfra voices');
@@ -187,6 +195,10 @@ async function fetchDeepinfraVoices(apiKey: string): Promise<string[]> {
     }
     return [];
   } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return [];
+    }
     console.error('Error fetching Deepinfra voices:', error);
     return [];
   }
@@ -194,7 +206,8 @@ async function fetchDeepinfraVoices(apiKey: string): Promise<string[]> {
 
 async function fetchCustomOpenAiVoices(baseUrl: string, apiKey: string): Promise<string[] | null> {
   try {
-    const response = await fetch(`${baseUrl}/audio/voices`, {
+    const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
+    const response = await fetch(`${normalizedBaseUrl}/audio/voices`, {
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
@@ -230,7 +243,7 @@ export async function resolveVoices({ provider, model, apiKey = '', baseUrl = ''
       return defaultVoices;
     }
     const apiVoices = await fetchCustomOpenAiVoices(baseUrl, apiKey);
-    if (apiVoices && apiVoices.length > 0) {
+    if (apiVoices !== null) {
       return apiVoices;
     }
   }

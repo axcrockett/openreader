@@ -174,7 +174,11 @@ export async function runAudiobookGeneration({
       }
 
       if (!bookId) {
-        bookId = createdChapter.bookId!;
+        if (createdChapter.bookId) {
+          bookId = createdChapter.bookId;
+        } else {
+          throw new Error('Created chapter is missing bookId');
+        }
       }
 
       onChapterComplete?.(createdChapter);

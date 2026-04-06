@@ -22,6 +22,7 @@ export async function GET(req: NextRequest) {
     });
     return NextResponse.json({ voices });
   } catch (error) {
+    // This catch mainly guards auth/session access failures; voice resolution itself falls back internally.
     console.error('Error in voices endpoint:', error);
     const provider = req.headers.get('x-tts-provider') || 'openai';
     const model = req.headers.get('x-tts-model') || 'tts-1';
