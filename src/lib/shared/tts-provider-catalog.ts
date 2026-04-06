@@ -205,14 +205,22 @@ async function fetchDeepinfraVoices(apiKey: string): Promise<string[]> {
 }
 
 async function fetchCustomOpenAiVoices(baseUrl: string, apiKey: string): Promise<string[] | null> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, 10_000);
+
   try {
     const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
     const response = await fetch(`${normalizedBaseUrl}/audio/voices`, {
+      signal: controller.signal,
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
     });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       return null;
@@ -221,6 +229,7 @@ async function fetchCustomOpenAiVoices(baseUrl: string, apiKey: string): Promise
     const data = await response.json();
     return Array.isArray(data.voices) ? data.voices : null;
   } catch {
+    clearTimeout(timeoutId);
     console.log('Custom endpoint does not support voices, using defaults');
     return null;
   }

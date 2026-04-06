@@ -86,6 +86,12 @@ function isAbortLikeError(error: unknown): boolean {
   return error instanceof Error && (error.name === 'AbortError' || error.message.includes('cancelled'));
 }
 
+function createAudiobookAbortError(): Error {
+  const error = new Error('Audiobook generation cancelled');
+  error.name = 'AbortError';
+  return error;
+}
+
 export async function runAudiobookGeneration({
   adapter,
   apiKey,
@@ -120,7 +126,9 @@ export async function runAudiobookGeneration({
       const existingData = await getAudiobookStatus(bookId);
       if (existingData.chapters && existingData.chapters.length > 0) {
         for (const chapter of existingData.chapters) {
-          existingIndices.add(chapter.index);
+          if (chapter.status === 'completed') {
+            existingIndices.add(chapter.index);
+          }
         }
       }
     } catch (error) {
@@ -130,10 +138,7 @@ export async function runAudiobookGeneration({
 
   for (const chapter of chapters) {
     if (signal?.aborted) {
-      if (bookId) {
-        return bookId;
-      }
-      throw new Error('Audiobook generation cancelled');
+      throw createAudiobookAbortError();
     }
 
     const trimmedText = chapter.text.trim();
@@ -167,10 +172,7 @@ export async function runAudiobookGeneration({
       );
 
       if (signal?.aborted) {
-        if (bookId) {
-          return bookId;
-        }
-        throw new Error('Audiobook generation cancelled');
+        throw createAudiobookAbortError();
       }
 
       if (!bookId) {
@@ -186,10 +188,7 @@ export async function runAudiobookGeneration({
       onProgress((processedLength / totalLength) * 100);
     } catch (error) {
       if (isAbortLikeError(error)) {
-        if (bookId) {
-          return bookId;
-        }
-        throw new Error('Audiobook generation cancelled');
+        throw createAudiobookAbortError();
       }
 
       console.error('Error processing chapter:', error);
@@ -200,6 +199,8 @@ export async function runAudiobookGeneration({
         bookId,
         format: effectiveFormat,
       });
+      processedLength += trimmedText.length;
+      onProgress((processedLength / totalLength) * 100);
     }
   }
 

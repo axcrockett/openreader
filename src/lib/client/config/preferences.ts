@@ -8,6 +8,9 @@ function isObjectLike(value: unknown): value is Record<string, unknown> {
 function deepEqual(left: unknown, right: unknown): boolean {
   if (left === right) return true;
 
+  if (Array.isArray(left) !== Array.isArray(right)) return false;
+  if (isObjectLike(left) !== isObjectLike(right)) return false;
+
   if (Array.isArray(left) && Array.isArray(right)) {
     if (left.length !== right.length) return false;
     for (let i = 0; i < left.length; i += 1) {
