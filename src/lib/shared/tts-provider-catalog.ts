@@ -181,8 +181,6 @@ async function fetchDeepinfraVoices(apiKey: string): Promise<string[]> {
       },
     });
 
-    clearTimeout(timeoutId);
-
     if (!response.ok) {
       throw new Error('Failed to fetch Deepinfra voices');
     }
@@ -195,12 +193,13 @@ async function fetchDeepinfraVoices(apiKey: string): Promise<string[]> {
     }
     return [];
   } catch (error) {
-    clearTimeout(timeoutId);
     if (error instanceof DOMException && error.name === 'AbortError') {
       return [];
     }
     console.error('Error fetching Deepinfra voices:', error);
     return [];
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -220,18 +219,19 @@ async function fetchCustomOpenAiVoices(baseUrl: string, apiKey: string): Promise
       },
     });
 
-    clearTimeout(timeoutId);
-
     if (!response.ok) {
       return null;
     }
 
     const data = await response.json();
-    return Array.isArray(data.voices) ? data.voices : null;
+    return Array.isArray(data.voices) && data.voices.every((voice: unknown) => typeof voice === 'string')
+      ? data.voices
+      : null;
   } catch {
-    clearTimeout(timeoutId);
     console.log('Custom endpoint does not support voices, using defaults');
     return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
