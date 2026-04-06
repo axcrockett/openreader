@@ -204,7 +204,7 @@ async function runProviderRequest(request: ResolvedServerTTSRequest, signal: Abo
     apiKey: request.apiKey,
     baseURL: request.baseUrl,
     maxRetries: 0,
-    timeout: Number(process.env.TTS_UPSTREAM_TIMEOUT_MS ?? 45_000),
+    timeout: Number(process.env.TTS_UPSTREAM_TIMEOUT_MS ?? 285_000),
   });
 
   const createParams: ExtendedSpeechParams = {

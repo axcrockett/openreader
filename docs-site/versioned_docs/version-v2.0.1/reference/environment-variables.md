@@ -24,6 +24,7 @@ This is the single reference page for OpenReader environment variables.
 | `TTS_RETRY_INITIAL_MS` | TTS retry | `250` | Tune initial retry delay |
 | `TTS_RETRY_MAX_MS` | TTS retry | `2000` | Tune max retry delay |
 | `TTS_RETRY_BACKOFF` | TTS retry | `2` | Tune exponential backoff factor |
+| `TTS_UPSTREAM_TIMEOUT_MS` | TTS request timeout | `285000` | Set max upstream TTS request duration before fail-fast |
 | `TTS_ENABLE_RATE_LIMIT` | Rate limiting | `false` | Set `true` to enable TTS per-user/IP daily character limits |
 | `TTS_DAILY_LIMIT_ANONYMOUS` | Rate limiting | `50000` | Override anonymous per-user daily character limit |
 | `TTS_DAILY_LIMIT_AUTHENTICATED` | Rate limiting | `500000` | Override authenticated per-user daily character limit |
@@ -109,6 +110,14 @@ Maximum retry delay in milliseconds.
 Exponential backoff multiplier between retries.
 
 - Default: `2`
+
+### TTS_UPSTREAM_TIMEOUT_MS
+
+Maximum upstream TTS request timeout in milliseconds.
+
+- Default: `285000` (285 seconds)
+- Applies to outbound provider calls from server routes using shared TTS generation
+- Increase for slower providers/models; decrease to fail fast and surface retryable errors sooner
 
 ### TTS_ENABLE_RATE_LIMIT
 
