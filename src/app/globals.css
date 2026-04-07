@@ -184,6 +184,23 @@ html.slate {
   );
 }
 
+/* Custom theme: variables are set via inline styles from JS/localStorage.
+   These fallback values are only used before JS hydrates. */
+html.custom {
+  --background: #1a1a2e;
+  --foreground: #e0e0e0;
+  --base: #16213e;
+  --offbase: #0f3460;
+  --accent: #e94560;
+  --secondary-accent: #f78da7;
+  --muted: #7f8c8d;
+  --prism-gradient: linear-gradient(90deg,
+    #e94560,
+    #f78da7,
+    #7f8c8d
+  );
+}
+
 body {
   color: var(--foreground);
   background: var(--background);

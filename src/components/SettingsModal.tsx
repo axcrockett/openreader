@@ -23,7 +23,8 @@ import { useDocuments } from '@/contexts/DocumentContext';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ProgressPopup } from '@/components/ProgressPopup';
 import { useTimeEstimation } from '@/hooks/useTimeEstimation';
-import { THEMES } from '@/contexts/ThemeContext';
+import { THEMES, getCustomThemeColors, type CustomThemeColors } from '@/contexts/ThemeContext';
+import { ColorPicker } from '@/components/ColorPicker';
 import { DocumentSelectionModal } from '@/components/documents/DocumentSelectionModal';
 import { BaseDocument } from '@/types/documents';
 import { getAuthClient } from '@/lib/client/auth-client';
@@ -61,7 +62,7 @@ const THEME_COLORS: Record<string, ThemeColorSet> = {
 
 const LIGHT_THEME_IDS = new Set(['light', 'lavender', 'rose', 'sand', 'sky', 'slate']);
 
-const allThemes = THEMES.map(id => ({
+const allThemes = THEMES.filter(id => id !== 'custom').map(id => ({
   id,
   name: id.charAt(0).toUpperCase() + id.slice(1),
 }));
@@ -69,6 +70,16 @@ const allThemes = THEMES.map(id => ({
 const systemTheme = allThemes.find(t => t.id === 'system')!;
 const lightThemes = allThemes.filter(t => LIGHT_THEME_IDS.has(t.id));
 const darkThemes = allThemes.filter(t => t.id !== 'system' && !LIGHT_THEME_IDS.has(t.id));
+
+const CUSTOM_COLOR_FIELDS: { key: keyof CustomThemeColors; label: string }[] = [
+  { key: 'background', label: 'Background' },
+  { key: 'base', label: 'Base' },
+  { key: 'offbase', label: 'Off-base' },
+  { key: 'accent', label: 'Accent' },
+  { key: 'secondaryAccent', label: 'Accent 2' },
+  { key: 'foreground', label: 'Foreground' },
+  { key: 'muted', label: 'Muted' },
+];
 
 type SectionId = 'api' | 'theme' | 'docs' | 'account';
 
@@ -83,7 +94,9 @@ export function SettingsModal({ className = '' }: { className?: string }) {
   const [isOpen, setIsOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<SectionId>(enableTTSProvidersTab ? 'api' : 'theme');
 
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, applyCustomColors } = useTheme();
+  const [customColors, setCustomColors] = useState<CustomThemeColors>(getCustomThemeColors);
+  const [isCustomExpanded, setIsCustomExpanded] = useState(false);
   const { apiKey, baseUrl, ttsProvider, ttsModel, ttsInstructions, updateConfig, updateConfigKey } = useConfig();
   const { refreshDocuments } = useDocuments();
   const [localApiKey, setLocalApiKey] = useState(apiKey);
@@ -344,8 +357,19 @@ export function SettingsModal({ className = '' }: { className?: string }) {
 
   const getThemeColors = useCallback((id: string): ThemeColorSet => {
     if (id === 'system') return THEME_COLORS[systemIsDark ? 'dark' : 'light'];
+    if (id === 'custom') {
+      return {
+        background: customColors.background,
+        base: customColors.base,
+        offbase: customColors.offbase,
+        accent: customColors.accent,
+        secondaryAccent: customColors.secondaryAccent,
+        foreground: customColors.foreground,
+        muted: customColors.muted,
+      };
+    }
     return THEME_COLORS[id] || THEME_COLORS.light;
-  }, [systemIsDark]);
+  }, [systemIsDark, customColors]);
 
   const visibleSections = useMemo(
     () => SIDEBAR_SECTIONS.filter((section) => {
@@ -693,7 +717,7 @@ export function SettingsModal({ className = '' }: { className?: string }) {
                               return (
                                 <button
                                   onClick={() => setTheme(systemTheme.id)}
-                                  className={`flex items-center gap-3 rounded-lg px-3 py-1.5 w-full text-left transition-all duration-200 ease-in-out transform hover:scale-[1.02] border
+                                  className={`flex items-center gap-2 rounded-lg px-2 py-1.5 w-full text-left transition-all duration-200 ease-in-out transform hover:scale-[1.02] border
                                     ${isActive
                                       ? 'border-accent'
                                       : 'border-offbase hover:border-muted'
@@ -706,7 +730,7 @@ export function SettingsModal({ className = '' }: { className?: string }) {
                                     <span className="w-3.5 shrink-0" />
                                   )}
                                   <span
-                                    className="text-xs font-medium w-16 shrink-0"
+                                    className="text-xs font-medium w-14 shrink-0"
                                     style={{ color: colors.foreground }}
                                   >
                                     {systemTheme.name}
@@ -723,10 +747,113 @@ export function SettingsModal({ className = '' }: { className?: string }) {
                             })()}
                           </div>
 
+                          {/* Custom theme */}
+                          <div className="space-y-1.5">
+                            <label className="block text-xs font-medium text-muted uppercase tracking-wide">Custom</label>
+                            {(() => {
+                              const colors = getThemeColors('custom');
+                              const isActive = theme === 'custom';
+                              return (
+                                <div className="space-y-1.5">
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={() => {
+                                        setTheme('custom');
+                                        setIsCustomExpanded(true);
+                                      }}
+                                      className={`flex items-center gap-2 rounded-lg px-2 py-1.5 flex-1 text-left transition-all duration-200 ease-in-out transform hover:scale-[1.02] border
+                                        ${isActive
+                                          ? 'border-accent'
+                                          : 'border-offbase hover:border-muted'
+                                        }`}
+                                      style={{ backgroundColor: colors.base }}
+                                    >
+                                      {isActive ? (
+                                        <CheckIcon className="h-3.5 w-3.5 shrink-0" style={{ color: colors.accent }} />
+                                      ) : (
+                                        <span className="w-3.5 shrink-0" />
+                                      )}
+                                      <span
+                                        className="text-xs font-medium w-14 shrink-0"
+                                        style={{ color: colors.foreground }}
+                                      >
+                                        Custom
+                                      </span>
+                                      <div className="flex gap-1 ml-auto">
+                                        <div className="w-4 h-4 rounded-full border border-offbase" style={{ backgroundColor: colors.background }} />
+                                        <div className="w-4 h-4 rounded-full border border-offbase" style={{ backgroundColor: colors.offbase }} />
+                                        <div className="w-4 h-4 rounded-full" style={{ backgroundColor: colors.accent }} />
+                                        <div className="w-4 h-4 rounded-full" style={{ backgroundColor: colors.secondaryAccent }} />
+                                        <div className="w-4 h-4 rounded-full" style={{ backgroundColor: colors.muted }} />
+                                      </div>
+                                    </button>
+                                    <button
+                                      onClick={() => setIsCustomExpanded(!isCustomExpanded)}
+                                      className="shrink-0 p-1.5 rounded-lg border border-offbase hover:border-muted transition-colors"
+                                      style={{ color: colors.muted, backgroundColor: colors.base }}
+                                      aria-label={isCustomExpanded ? 'Collapse color picker' : 'Expand color picker'}
+                                    >
+                                      <svg className={`w-3.5 h-3.5 transition-transform duration-200 ${isCustomExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                                      </svg>
+                                    </button>
+                                  </div>
+
+                                  {isCustomExpanded && (
+                                    <div
+                                      className="rounded-lg border p-3 space-y-2"
+                                      style={{
+                                        backgroundColor: colors.background,
+                                        borderColor: isActive ? colors.accent : colors.offbase,
+                                      }}
+                                    >
+                                      <div className="flex flex-col gap-1">
+                                        {CUSTOM_COLOR_FIELDS.map(({ key, label }) => (
+                                          <div
+                                            key={key}
+                                            className="grid items-center rounded-md px-2 py-1"
+                                            style={{
+                                              backgroundColor: colors.base,
+                                              gridTemplateColumns: '5rem 1fr auto',
+                                              gap: '0.5rem',
+                                            }}
+                                          >
+                                            <span
+                                              className="text-xs font-medium truncate"
+                                              style={{ color: colors.foreground }}
+                                            >
+                                              {label}
+                                            </span>
+                                            <span
+                                              className="text-[10px] font-mono text-right"
+                                              style={{ color: colors.muted }}
+                                            >
+                                              {customColors[key]}
+                                            </span>
+                                            <ColorPicker
+                                              value={customColors[key]}
+                                              field={key}
+                                              label={label}
+                                              onChange={(color) => {
+                                                const updated = { ...customColors, [key]: color };
+                                                setCustomColors(updated);
+                                                applyCustomColors(updated);
+                                              }}
+                                            />
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </div>
+
                           {/* Light themes */}
                           <div className="space-y-1.5">
                             <label className="block text-xs font-medium text-muted uppercase tracking-wide">Light</label>
-                            <div className="grid grid-cols-2 gap-1.5">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                               {lightThemes.map((t) => {
                                 const colors = getThemeColors(t.id);
                                 const isActive = theme === t.id;
@@ -734,7 +861,7 @@ export function SettingsModal({ className = '' }: { className?: string }) {
                                   <button
                                     key={t.id}
                                     onClick={() => setTheme(t.id)}
-                                    className={`flex items-center gap-3 rounded-lg px-3 py-1.5 text-left transition-all duration-200 ease-in-out transform hover:scale-[1.02] border
+                                    className={`flex items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-all duration-200 ease-in-out transform hover:scale-[1.02] border
                                       ${isActive
                                         ? 'border-accent'
                                         : 'border-offbase hover:border-muted'
@@ -747,7 +874,7 @@ export function SettingsModal({ className = '' }: { className?: string }) {
                                       <span className="w-3.5 shrink-0" />
                                     )}
                                     <span
-                                      className="text-xs font-medium w-16 shrink-0"
+                                      className="text-xs font-medium w-14 shrink-0"
                                       style={{ color: colors.foreground }}
                                     >
                                       {t.name}
@@ -768,7 +895,7 @@ export function SettingsModal({ className = '' }: { className?: string }) {
                           {/* Dark themes */}
                           <div className="space-y-1.5">
                             <label className="block text-xs font-medium text-muted uppercase tracking-wide">Dark</label>
-                            <div className="grid grid-cols-2 gap-1.5">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                               {darkThemes.map((t) => {
                                 const colors = getThemeColors(t.id);
                                 const isActive = theme === t.id;
@@ -776,7 +903,7 @@ export function SettingsModal({ className = '' }: { className?: string }) {
                                   <button
                                     key={t.id}
                                     onClick={() => setTheme(t.id)}
-                                    className={`flex items-center gap-3 rounded-lg px-3 py-1.5 text-left transition-all duration-200 ease-in-out transform hover:scale-[1.02] border
+                                    className={`flex items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-all duration-200 ease-in-out transform hover:scale-[1.02] border
                                       ${isActive
                                         ? 'border-accent'
                                         : 'border-offbase hover:border-muted'
@@ -789,7 +916,7 @@ export function SettingsModal({ className = '' }: { className?: string }) {
                                       <span className="w-3.5 shrink-0" />
                                     )}
                                     <span
-                                      className="text-xs font-medium w-16 shrink-0"
+                                      className="text-xs font-medium w-14 shrink-0"
                                       style={{ color: colors.foreground }}
                                     >
                                       {t.name}
