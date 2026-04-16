@@ -13,7 +13,8 @@ RUN git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git && \
     cmake --build build -j
 
 # Stage 1b: extract seaweedfs weed binary (for optional embedded weed mini)
-FROM chrislusf/seaweedfs:latest AS seaweedfs-builder
+# Pin to 4.18 because CI observed upload regressions on 4.19.
+FROM chrislusf/seaweedfs:4.18 AS seaweedfs-builder
 RUN cp "$(command -v weed)" /tmp/weed && \
     (wget -qO /tmp/SeaweedFS-LICENSE.txt "https://raw.githubusercontent.com/seaweedfs/seaweedfs/master/LICENSE" || \
      wget -qO /tmp/SeaweedFS-LICENSE.txt "https://raw.githubusercontent.com/seaweedfs/seaweedfs/main/LICENSE")
