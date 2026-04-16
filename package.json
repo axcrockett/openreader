@@ -59,6 +59,7 @@
     "react-pdf": "^9.2.1",
     "react-reader": "^2.0.15",
     "remark-gfm": "^4.0.1",
+    "replicate": "^1.4.0",
     "uuid": "^11.1.0"
   },
   "devDependencies": {

@@ -29,6 +29,7 @@ import { getOpenReaderTestNamespace, getUnclaimedUserIdForNamespace } from '@/li
 import { buildAllowedAudiobookUserIds, pickAudiobookOwner } from '@/lib/server/audiobooks/user-scope';
 import { getFFmpegPath } from '@/lib/server/audiobooks/ffmpeg-bin';
 import { generateTTSBuffer } from '@/lib/server/tts/generate';
+import { supportsNativeModelSpeed } from '@/lib/shared/tts-provider-catalog';
 import type { AudiobookGenerationSettings } from '@/types/client';
 import type { TTSAudiobookFormat } from '@/types/tts';
 
@@ -90,6 +91,12 @@ function s3NotConfiguredResponse(): NextResponse {
     { error: 'Audiobooks storage is not configured. Set S3_* environment variables.' },
     { status: 503 },
   );
+}
+
+function normalizeNativeSpeedForSettings(settings: AudiobookGenerationSettings): AudiobookGenerationSettings {
+  return supportsNativeModelSpeed(settings.ttsProvider, settings.ttsModel)
+    ? settings
+    : { ...settings, nativeSpeed: 1 };
 }
 
 function chapterFileMimeType(format: TTSAudiobookFormat): string {
@@ -300,18 +307,19 @@ export async function POST(request: NextRequest) {
       existingSettings = null;
     }
 
-    const incomingSettings = data.settings;
+    const incomingSettings = data.settings ? normalizeNativeSpeedForSettings(data.settings) : undefined;
     if (existingSettings && hasChapters && incomingSettings) {
+      const normalizedExistingSettings = normalizeNativeSpeedForSettings(existingSettings);
       const mismatch =
-        existingSettings.ttsProvider !== incomingSettings.ttsProvider ||
-        existingSettings.ttsModel !== incomingSettings.ttsModel ||
-        existingSettings.voice !== incomingSettings.voice ||
-        existingSettings.nativeSpeed !== incomingSettings.nativeSpeed ||
-        existingSettings.postSpeed !== incomingSettings.postSpeed ||
-        existingSettings.format !== incomingSettings.format ||
-        (existingSettings.ttsInstructions || '') !== (incomingSettings.ttsInstructions || '');
+        normalizedExistingSettings.ttsProvider !== incomingSettings.ttsProvider ||
+        normalizedExistingSettings.ttsModel !== incomingSettings.ttsModel ||
+        normalizedExistingSettings.voice !== incomingSettings.voice ||
+        normalizedExistingSettings.nativeSpeed !== incomingSettings.nativeSpeed ||
+        normalizedExistingSettings.postSpeed !== incomingSettings.postSpeed ||
+        normalizedExistingSettings.format !== incomingSettings.format ||
+        (normalizedExistingSettings.ttsInstructions || '') !== (incomingSettings.ttsInstructions || '');
       if (mismatch) {
-        return NextResponse.json({ error: 'Audiobook settings mismatch', settings: existingSettings }, { status: 409 });
+        return NextResponse.json({ error: 'Audiobook settings mismatch', settings: normalizedExistingSettings }, { status: 409 });
       }
     }
 

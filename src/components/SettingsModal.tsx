@@ -491,7 +491,7 @@ export function SettingsModal({ className = '' }: { className?: string }) {
                     </nav>
 
                     {/* Content */}
-                    <div className="flex-1 p-4 overflow-y-auto">
+                    <div className="flex-1 min-w-0 p-4 overflow-y-auto">
                       {/* API Section */}
                       {activeSection === 'api' && (
                         <div className="space-y-4">
@@ -506,6 +506,9 @@ export function SettingsModal({ className = '' }: { className?: string }) {
                                   setLocalBaseUrl('https://api.openai.com/v1');
                                 } else if (provider.id === 'custom-openai') {
                                   setModelValue('kokoro');
+                                  setLocalBaseUrl('');
+                                } else if (provider.id === 'replicate') {
+                                  setModelValue('google/gemini-3.1-flash-tts');
                                   setLocalBaseUrl('');
                                 } else if (provider.id === 'deepinfra') {
                                   setModelValue('hexgrad/Kokoro-82M');
@@ -528,7 +531,10 @@ export function SettingsModal({ className = '' }: { className?: string }) {
                                 leaveFrom="opacity-100"
                                 leaveTo="opacity-0"
                               >
-                                <ListboxOptions className="absolute mt-1 w-full overflow-auto rounded-md bg-background py-1 shadow-lg ring-1 ring-offbase focus:outline-none z-50">
+                                <ListboxOptions
+                                  anchor="bottom start"
+                                  className="z-50 w-[var(--button-width)] max-h-60 overflow-y-auto overscroll-contain rounded-md bg-background py-1 shadow-lg ring-1 ring-offbase focus:outline-none [--anchor-gap:0.25rem]"
+                                >
                                   {ttsProviders.map((provider) => (
                                     <ListboxOption
                                       key={provider.id}
@@ -556,7 +562,7 @@ export function SettingsModal({ className = '' }: { className?: string }) {
                             </Listbox>
                           </div>
 
-                          {(localTTSProvider === 'custom-openai' || !localBaseUrl || localBaseUrl === '') && (
+                          {localTTSProvider !== 'replicate' && (localTTSProvider === 'custom-openai' || !localBaseUrl || localBaseUrl === '') && (
                             <div className="space-y-1.5">
                               <label className="block text-sm font-medium text-foreground">
                                 API Base URL
@@ -614,7 +620,10 @@ export function SettingsModal({ className = '' }: { className?: string }) {
                                   leaveFrom="opacity-100"
                                   leaveTo="opacity-0"
                                 >
-                                  <ListboxOptions className="absolute mt-1 w-full overflow-auto rounded-md bg-background py-1 shadow-lg ring-1 ring-offbase focus:outline-none z-50">
+                                  <ListboxOptions
+                                    anchor="bottom start"
+                                    className="z-50 w-[var(--button-width)] max-h-60 overflow-y-auto overscroll-contain rounded-md bg-background py-1 shadow-lg ring-1 ring-offbase focus:outline-none [--anchor-gap:0.25rem]"
+                                  >
                                     {ttsModels.map((model) => (
                                       <ListboxOption
                                         key={model.id}

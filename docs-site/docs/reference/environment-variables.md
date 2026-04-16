@@ -379,7 +379,7 @@ Controls whether the **TTS Provider** section appears in the Settings modal.
  Sets the default TTS provider for new users.
  
  - Default: `custom-openai`
- - Example values: `deepinfra`, `openai`, `custom-openai`
+ - Example values: `replicate`, `deepinfra`, `openai`, `custom-openai`
  
  ### NEXT_PUBLIC_DEFAULT_TTS_MODEL
  

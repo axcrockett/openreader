@@ -11,7 +11,7 @@ import { LoadingSpinner } from '@/components/Spinner';
 import { useConfig } from '@/contexts/ConfigContext';
 import { useTTS } from '@/contexts/TTSContext';
 import { VoicesControlBase } from '@/components/player/VoicesControlBase';
-import { supportsTtsInstructions } from '@/lib/shared/tts-provider-catalog';
+import { supportsNativeModelSpeed, supportsTtsInstructions } from '@/lib/shared/tts-provider-catalog';
 import type { TTSAudiobookChapter, TTSAudiobookFormat } from '@/types/tts';
 import { 
   getAudiobookStatus, 
@@ -73,6 +73,8 @@ export function AudiobookExportModal({
   const formatSpeed = useCallback((speed: number) => {
     return Number.isInteger(speed) ? speed.toString() : speed.toFixed(1);
   }, []);
+  const nativeSpeedSupported = useMemo(() => supportsNativeModelSpeed(ttsProvider, ttsModel), [ttsProvider, ttsModel]);
+  const effectiveNativeSpeed = nativeSpeedSupported ? nativeSpeed : 1;
 
   const hasExistingAudiobook = Boolean(bookId) || chapters.length > 0;
   const isLegacyAudiobookMissingSettings = hasExistingAudiobook && savedSettings === null;
@@ -113,12 +115,12 @@ export function AudiobookExportModal({
       ttsProvider,
       ttsModel,
       voice: nextVoice,
-      nativeSpeed,
+      nativeSpeed: effectiveNativeSpeed,
       postSpeed,
       format,
       ttsInstructions: supportsTtsInstructions(ttsModel) ? ttsInstructions : undefined,
     };
-  }, [savedSettings, audiobookVoice, configVoice, availableVoices, ttsProvider, ttsModel, ttsInstructions, nativeSpeed, postSpeed, format]);
+  }, [savedSettings, audiobookVoice, configVoice, availableVoices, ttsProvider, ttsModel, ttsInstructions, effectiveNativeSpeed, postSpeed, format]);
 
   const fetchExistingChapters = useCallback(async (soft: boolean = false) => {
     if (soft) {
@@ -529,11 +531,15 @@ export function AudiobookExportModal({
 			                                      <div className="text-sm font-medium text-foreground">{savedSettings.format.toUpperCase()}</div>
 			                                    </div>
 			                                  </div>
-			                                  <div className="grid grid-cols-2 gap-3">
-			                                    <div className="rounded-lg bg-base p-3">
-			                                      <div className="text-[11px] uppercase tracking-wider text-muted mb-1">Native speed</div>
-			                                      <div className="text-sm font-medium text-foreground">{formatSpeed(savedSettings.nativeSpeed)}x</div>
-			                                    </div>
+                                  <div className="grid grid-cols-2 gap-3">
+                                    <div className="rounded-lg bg-base p-3">
+                                      <div className="text-[11px] uppercase tracking-wider text-muted mb-1">Native speed</div>
+                                      <div className="text-sm font-medium text-foreground">
+                                        {supportsNativeModelSpeed(savedSettings.ttsProvider, savedSettings.ttsModel)
+                                          ? `${formatSpeed(savedSettings.nativeSpeed)}x`
+                                          : 'Not supported'}
+                                      </div>
+                                    </div>
 			                                    <div className="rounded-lg bg-base p-3">
 			                                      <div className="text-[11px] uppercase tracking-wider text-muted mb-1">Post speed</div>
 			                                      <div className="text-sm font-medium text-foreground">{formatSpeed(savedSettings.postSpeed)}x</div>
@@ -616,29 +622,39 @@ export function AudiobookExportModal({
 			                                    </div>
 			                                  </div>
 
-			                                  {/* Speed controls */}
-			                                  <div className="rounded-lg bg-base p-3 space-y-3">
-			                                    <div className="space-y-2">
-			                                      <div className="flex items-center justify-between">
-			                                        <label className="text-[11px] uppercase tracking-wider font-medium text-muted">Native model speed</label>
-			                                        <span className="text-xs font-medium text-accent tabular-nums">{formatSpeed(nativeSpeed)}x</span>
-			                                      </div>
-			                                      <input
-			                                        type="range"
-			                                        min="0.5"
-			                                        max="3"
-			                                        step="0.1"
-			                                        value={nativeSpeed}
-			                                        onChange={(e) => setNativeSpeed(parseFloat(e.target.value))}
-			                                        className="w-full h-1.5 bg-offbase rounded-full appearance-none cursor-pointer [&::-webkit-slider-runnable-track]:bg-offbase [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:h-1.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent [&::-webkit-slider-thumb]:-mt-[5px] [&::-webkit-slider-thumb]:shadow-sm [&::-moz-range-track]:bg-offbase [&::-moz-range-track]:rounded-full [&::-moz-range-track]:h-1.5 [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-accent [&::-moz-range-thumb]:border-0"
-			                                      />
-			                                      <div className="flex justify-between text-[10px] text-muted">
-			                                        <span>0.5x</span>
-			                                        <span>3x</span>
-			                                      </div>
-			                                    </div>
+                                  {/* Speed controls */}
+                                  <div className="rounded-lg bg-base p-3 space-y-3">
+                                    {!nativeSpeedSupported && (
+                                      <div className="rounded-md border border-offbase bg-background px-2 py-1.5 text-[11px] text-muted">
+                                        Native model speed is not available for this model.
+                                      </div>
+                                    )}
 
-			                                    <div className="border-t border-offbase" />
+                                    {nativeSpeedSupported && (
+                                      <>
+                                        <div className="space-y-2">
+                                          <div className="flex items-center justify-between">
+                                            <label className="text-[11px] uppercase tracking-wider font-medium text-muted">Native model speed</label>
+                                            <span className="text-xs font-medium text-accent tabular-nums">{formatSpeed(nativeSpeed)}x</span>
+                                          </div>
+                                          <input
+                                            type="range"
+                                            min="0.5"
+                                            max="3"
+                                            step="0.1"
+                                            value={nativeSpeed}
+                                            onChange={(e) => setNativeSpeed(parseFloat(e.target.value))}
+                                            className="w-full h-1.5 bg-offbase rounded-full appearance-none cursor-pointer [&::-webkit-slider-runnable-track]:bg-offbase [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:h-1.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent [&::-webkit-slider-thumb]:-mt-[5px] [&::-webkit-slider-thumb]:shadow-sm [&::-moz-range-track]:bg-offbase [&::-moz-range-track]:rounded-full [&::-moz-range-track]:h-1.5 [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-accent [&::-moz-range-thumb]:border-0"
+                                          />
+                                          <div className="flex justify-between text-[10px] text-muted">
+                                            <span>0.5x</span>
+                                            <span>3x</span>
+                                          </div>
+                                        </div>
+
+                                        <div className="border-t border-offbase" />
+                                      </>
+                                    )}
 
 			                                    <div className="space-y-2">
 			                                      <div className="flex items-center justify-between">

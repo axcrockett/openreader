@@ -1,6 +1,6 @@
 import { isKokoroModel } from '@/lib/shared/kokoro';
 
-export type TtsProviderId = 'custom-openai' | 'deepinfra' | 'openai';
+export type TtsProviderId = 'custom-openai' | 'replicate' | 'deepinfra' | 'openai';
 export type TtsVoiceSource = 'static' | 'deepinfra-api' | 'custom-openai-api';
 
 export interface TtsModelDefinition {
@@ -54,6 +54,13 @@ const DEEPINFRA_MODELS_LIMITED: TtsModelDefinition[] = [
   { id: 'hexgrad/Kokoro-82M', name: 'hexgrad/Kokoro-82M' },
 ];
 
+const REPLICATE_MODELS: TtsModelDefinition[] = [
+  { id: 'google/gemini-3.1-flash-tts', name: 'Gemini 3.1 Flash TTS' },
+  { id: 'minimax/speech-2.8-turbo', name: 'MiniMax Speech 2.8 Turbo' },
+  { id: 'qwen/qwen3-tts', name: 'Qwen3 TTS' },
+  { id: 'inworld/tts-1.5-mini', name: 'Inworld TTS 1.5 Mini' },
+];
+
 const DEFAULT_MODELS: TtsModelDefinition[] = [{ id: 'tts-1', name: 'TTS-1' }];
 
 export const OPENAI_DEFAULT_VOICES = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'] as const;
@@ -71,12 +78,34 @@ export const KOKORO_DEFAULT_VOICES = [
 export const ORPHEUS_DEFAULT_VOICES = ['tara', 'leah', 'jess', 'leo', 'dan', 'mia', 'zac'] as const;
 export const SESAME_DEFAULT_VOICES = ['conversational_a', 'conversational_b', 'read_speech_a', 'read_speech_b', 'read_speech_c', 'read_speech_d', 'none'] as const;
 
+// Replicate model voices
+export const GEMINI_FLASH_TTS_VOICES = [
+  'Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir', 'Leda', 'Orus', 'Aoede',
+  'Callirrhoe', 'Autonoe', 'Enceladus', 'Iapetus', 'Umbriel', 'Algenib',
+  'Despina', 'Erinome', 'Laomedeia', 'Achernar', 'Algieba', 'Schedar',
+  'Gacrux', 'Pulcherrima', 'Achird', 'Zubenelgenubi', 'Vindemiatrix',
+  'Sadachbia', 'Sadaltager', 'Sulafat', 'Alnilam', 'Rasalgethi',
+] as const;
+export const MINIMAX_SPEECH_VOICES = [
+  'Deep_Voice_Man', 'Imposing_Manner', 'Elegant_Man', 'Casual_Guy',
+  'Friendly_Person', 'Decent_Boy', 'Lively_Girl', 'Exuberant_Girl',
+  'Inspirational_girl', 'Young_Knight', 'Abbess', 'Wise_Woman',
+] as const;
+export const QWEN3_TTS_VOICES = ['Aiden', 'Dylan'] as const;
+export const INWORLD_TTS_VOICES = ['Ashley', 'Dennis', 'Alex', 'Darlene'] as const;
+
 export const TTS_PROVIDER_DEFINITIONS: TtsProviderDefinition[] = [
   {
     id: 'custom-openai',
     name: 'Custom OpenAI-Like',
     supportsCustomModel: true,
     models: () => CUSTOM_OPENAI_MODELS,
+  },
+  {
+    id: 'replicate',
+    name: 'Replicate',
+    supportsCustomModel: false,
+    models: () => REPLICATE_MODELS,
   },
   {
     id: 'deepinfra',
@@ -97,8 +126,31 @@ export const TTS_PROVIDER_DEFINITIONS: TtsProviderDefinition[] = [
   },
 ];
 
+const MODELS_WITH_INSTRUCTIONS = new Set([
+  'gpt-4o-mini-tts',
+  'google/gemini-3.1-flash-tts',
+  'qwen/qwen3-tts',
+]);
+
+const REPLICATE_MODELS_WITHOUT_NATIVE_SPEED = new Set([
+  'google/gemini-3.1-flash-tts',
+  'qwen/qwen3-tts',
+]);
+
 export function supportsTtsInstructions(model: string | null | undefined): boolean {
-  return model === 'gpt-4o-mini-tts';
+  return !!model && MODELS_WITH_INSTRUCTIONS.has(model);
+}
+
+export function supportsNativeModelSpeed(provider: string | null | undefined, model: string | null | undefined): boolean {
+  if (!model) {
+    return true;
+  }
+
+  if (provider === 'replicate' && REPLICATE_MODELS_WITHOUT_NATIVE_SPEED.has(model)) {
+    return false;
+  }
+
+  return true;
 }
 
 export function getProviderDefinition(provider: string | null | undefined): TtsProviderDefinition | undefined {
@@ -126,6 +178,22 @@ export function getDefaultVoices(provider: string, model: string): string[] {
       return [...KOKORO_DEFAULT_VOICES];
     }
     return [...CUSTOM_OPENAI_DEFAULT_VOICES];
+  }
+
+  if (provider === 'replicate') {
+    if (model === 'google/gemini-3.1-flash-tts') {
+      return [...GEMINI_FLASH_TTS_VOICES];
+    }
+    if (model === 'minimax/speech-2.8-turbo') {
+      return [...MINIMAX_SPEECH_VOICES];
+    }
+    if (model === 'qwen/qwen3-tts') {
+      return [...QWEN3_TTS_VOICES];
+    }
+    if (model === 'inworld/tts-1.5-mini') {
+      return [...INWORLD_TTS_VOICES];
+    }
+    return [...GEMINI_FLASH_TTS_VOICES];
   }
 
   if (provider === 'deepinfra') {

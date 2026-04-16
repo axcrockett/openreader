@@ -49,8 +49,8 @@ We recommend setting these defaults for a production-like environment:
 - `NEXT_PUBLIC_ENABLE_DOCX_CONVERSION=false`: Disables DOCX upload (requires external tools anyway)
 - `NEXT_PUBLIC_ENABLE_DESTRUCTIVE_DELETE_ACTIONS=false`: Hides destructive "Delete All" actions
 - `NEXT_PUBLIC_ENABLE_TTS_PROVIDERS_TAB=false`: Hides the Settings -> TTS Provider section
-- `NEXT_PUBLIC_DEFAULT_TTS_PROVIDER=deepinfra`: Points default TTS to a scalable provider
-- `NEXT_PUBLIC_DEFAULT_TTS_MODEL=hexgrad/Kokoro-82M`: Uses a high-quality default model
+- `NEXT_PUBLIC_DEFAULT_TTS_PROVIDER=replicate`: Points default TTS to a scalable provider
+- `NEXT_PUBLIC_DEFAULT_TTS_MODEL=google/gemini-3.1-flash-tts`: Uses a high-quality default model
 - `NEXT_PUBLIC_SHOW_ALL_DEEPINFRA_MODELS=false`: Restricts usage to free models if no key is provided
 - `NEXT_PUBLIC_ENABLE_AUDIOBOOK_EXPORT=true`: (Optional) Controls audiobook export UI
 - `NEXT_PUBLIC_ENABLE_WORD_HIGHLIGHT=false`: (Optional) Controls word highlighting UI (requires timestamp backend)

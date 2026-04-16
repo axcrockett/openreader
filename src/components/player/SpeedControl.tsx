@@ -4,6 +4,7 @@ import { Input, Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
 import { ChevronUpDownIcon, SpeedometerIcon } from '@/components/icons/Icons';
 import { useConfig } from '@/contexts/ConfigContext';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { supportsNativeModelSpeed } from '@/lib/shared/tts-provider-catalog';
 
 export const SpeedControl = ({ 
   setSpeedAndRestart, 
@@ -12,7 +13,8 @@ export const SpeedControl = ({
   setSpeedAndRestart: (speed: number) => void;
   setAudioPlayerSpeedAndRestart: (speed: number) => void;
 }) => {
-  const { voiceSpeed, audioPlayerSpeed } = useConfig();
+  const { voiceSpeed, audioPlayerSpeed, ttsProvider, ttsModel } = useConfig();
+  const nativeSpeedSupported = supportsNativeModelSpeed(ttsProvider, ttsModel);
 
   const [localVoiceSpeed, setLocalVoiceSpeed] = useState(voiceSpeed);
   const [localAudioSpeed, setLocalAudioSpeed] = useState(audioPlayerSpeed);
@@ -53,28 +55,28 @@ export const SpeedControl = ({
   const triggerLabel = useMemo(
     () => {
       const parts: string[] = [];
-      if (localVoiceSpeed !== 1.0) parts.push(`${formatSpeed(localVoiceSpeed, 1)}x`);
+      if (nativeSpeedSupported && localVoiceSpeed !== 1.0) parts.push(`${formatSpeed(localVoiceSpeed, 1)}x`);
       if (localAudioSpeed !== 1.0) parts.push(`${formatSpeed(localAudioSpeed, 1)}x`);
       return parts.length > 0 ? parts.join(' • ') : '1x';
     },
-    [formatSpeed, localVoiceSpeed, localAudioSpeed]
+    [formatSpeed, localVoiceSpeed, localAudioSpeed, nativeSpeedSupported]
   );
 
   const compactTriggerLabel = useMemo(() => {
-    const voiceIsDefault = localVoiceSpeed === 1.0;
+    const voiceIsDefault = !nativeSpeedSupported || localVoiceSpeed === 1.0;
     const audioIsDefault = localAudioSpeed === 1.0;
 
     let combined = 1.0;
-    if (!voiceIsDefault && !audioIsDefault) {
+    if (nativeSpeedSupported && !voiceIsDefault && !audioIsDefault) {
       combined = (localVoiceSpeed + localAudioSpeed) / 2;
-    } else if (!voiceIsDefault) {
+    } else if (nativeSpeedSupported && !voiceIsDefault) {
       combined = localVoiceSpeed;
     } else if (!audioIsDefault) {
       combined = localAudioSpeed;
     }
 
     return `${formatSpeed(combined, 2)}x`;
-  }, [formatSpeed, localVoiceSpeed, localAudioSpeed]);
+  }, [formatSpeed, localVoiceSpeed, localAudioSpeed, nativeSpeedSupported]);
 
   const min = 0.5;
   const max = 3;
@@ -90,28 +92,36 @@ export const SpeedControl = ({
       </PopoverButton>
       <PopoverPanel anchor="top" className="absolute z-50 bg-base p-3 rounded-md shadow-lg border border-offbase">
         <div className="flex flex-col space-y-4">
-          <div className="flex flex-col space-y-2">
-            <div className="text-xs font-medium text-foreground">Native model speed</div>
-            <div className="flex justify-between">
-              <span className="text-xs">{min.toFixed(1)}x</span>
-              <span className="text-xs font-bold">
-                {Number.isInteger(localVoiceSpeed) ? localVoiceSpeed.toString() : localVoiceSpeed.toFixed(1)}x
-              </span>
-              <span className="text-xs">{max.toFixed(1)}x</span>
+          {!nativeSpeedSupported && (
+            <div className="rounded-md border border-offbase bg-background px-2 py-1.5 text-[11px] text-muted">
+              Native model speed is not available for this model.
             </div>
-            <Input
-              type="range"
-              min={min}
-              max={max}
-              step={step}
-              value={localVoiceSpeed}
-              onChange={handleVoiceSpeedChange}
-              onMouseUp={handleVoiceSpeedChangeComplete}
-              onKeyUp={handleVoiceSpeedChangeComplete}
-              onTouchEnd={handleVoiceSpeedChangeComplete}
-              className="w-full bg-offbase rounded-lg appearance-none cursor-pointer accent-accent [&::-webkit-slider-runnable-track]:bg-offbase [&::-webkit-slider-runnable-track]:rounded-lg [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent [&::-moz-range-track]:bg-offbase [&::-moz-range-track]:rounded-lg [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-accent"
-            />
-          </div>
+          )}
+
+          {nativeSpeedSupported && (
+            <div className="flex flex-col space-y-2">
+              <div className="text-xs font-medium text-foreground">Native model speed</div>
+              <div className="flex justify-between">
+                <span className="text-xs">{min.toFixed(1)}x</span>
+                <span className="text-xs font-bold">
+                  {Number.isInteger(localVoiceSpeed) ? localVoiceSpeed.toString() : localVoiceSpeed.toFixed(1)}x
+                </span>
+                <span className="text-xs">{max.toFixed(1)}x</span>
+              </div>
+              <Input
+                type="range"
+                min={min}
+                max={max}
+                step={step}
+                value={localVoiceSpeed}
+                onChange={handleVoiceSpeedChange}
+                onMouseUp={handleVoiceSpeedChangeComplete}
+                onKeyUp={handleVoiceSpeedChangeComplete}
+                onTouchEnd={handleVoiceSpeedChangeComplete}
+                className="w-full bg-offbase rounded-lg appearance-none cursor-pointer accent-accent [&::-webkit-slider-runnable-track]:bg-offbase [&::-webkit-slider-runnable-track]:rounded-lg [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent [&::-moz-range-track]:bg-offbase [&::-moz-range-track]:rounded-lg [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-accent"
+              />
+            </div>
+          )}
 
           <div className="flex flex-col space-y-2">
             <div className="text-xs font-medium text-foreground">Audio player speed</div>
