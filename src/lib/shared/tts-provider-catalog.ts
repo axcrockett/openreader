@@ -1,7 +1,8 @@
 import { isKokoroModel } from '@/lib/shared/kokoro';
 
 export type TtsProviderId = 'custom-openai' | 'replicate' | 'deepinfra' | 'openai';
-export type TtsVoiceSource = 'static' | 'deepinfra-api' | 'custom-openai-api';
+export type TtsVoiceSource = 'static' | 'deepinfra-api' | 'custom-openai-api' | 'replicate-api';
+export type ReplicateVoiceInputKey = 'voice' | 'voice_id' | 'speaker';
 
 export interface TtsModelDefinition {
   id: string;
@@ -54,13 +55,26 @@ const DEEPINFRA_MODELS_LIMITED: TtsModelDefinition[] = [
   { id: 'hexgrad/Kokoro-82M', name: 'hexgrad/Kokoro-82M' },
 ];
 
+export const REPLICATE_KOKORO_82M_VERSIONED_MODEL =
+  'alphanumericuser/kokoro-82m:89b6fa84e4fa2dd6bd3a96be3e1f12827a3516c9fda8fddbac7a0be131c9a6f5' as const;
+
 const REPLICATE_MODELS: TtsModelDefinition[] = [
-  { id: 'google/gemini-3.1-flash-tts', name: 'Gemini 3.1 Flash TTS' },
-  { id: 'minimax/speech-2.8-turbo', name: 'MiniMax Speech 2.8 Turbo' },
-  { id: 'qwen/qwen3-tts', name: 'Qwen3 TTS' },
-  { id: 'inworld/tts-1.5-mini', name: 'Inworld TTS 1.5 Mini' },
+  {
+    id: REPLICATE_KOKORO_82M_VERSIONED_MODEL,
+    name: 'alphanumericuser/kokoro-82m',
+  },
+  { id: 'google/gemini-3.1-flash-tts', name: 'google/gemini-3.1-flash-tts' },
+  { id: 'minimax/speech-2.8-turbo', name: 'minimax/speech-2.8-turbo' },
+  { id: 'qwen/qwen3-tts', name: 'qwen/qwen3-tts' },
+  { id: 'inworld/tts-1.5-mini', name: 'inworld/tts-1.5-mini' },
   { id: 'custom', name: 'Other' },
 ];
+const REPLICATE_BUILT_IN_MODELS = new Set(REPLICATE_MODELS.map((model) => model.id).filter((id) => id !== 'custom'));
+const DEEPINFRA_API_VOICE_MODELS = new Set([
+  'ResembleAI/chatterbox',
+  'Zyphra/Zonos-v0.1-hybrid',
+  'Zyphra/Zonos-v0.1-transformer',
+]);
 
 const DEFAULT_MODELS: TtsModelDefinition[] = [{ id: 'tts-1', name: 'TTS-1' }];
 
@@ -94,6 +108,24 @@ export const MINIMAX_SPEECH_VOICES = [
 ] as const;
 export const QWEN3_TTS_VOICES = ['Aiden', 'Dylan'] as const;
 export const INWORLD_TTS_VOICES = ['Ashley', 'Dennis', 'Alex', 'Darlene'] as const;
+const REPLICATE_VOICE_KEYS: readonly ReplicateVoiceInputKey[] = ['voice', 'voice_id', 'speaker'];
+const REPLICATE_DEFAULT_VOICES_BY_MODEL: Record<string, readonly string[]> = {
+  [REPLICATE_KOKORO_82M_VERSIONED_MODEL]: KOKORO_DEFAULT_VOICES,
+  'google/gemini-3.1-flash-tts': GEMINI_FLASH_TTS_VOICES,
+  'minimax/speech-2.8-turbo': MINIMAX_SPEECH_VOICES,
+  'qwen/qwen3-tts': QWEN3_TTS_VOICES,
+  'inworld/tts-1.5-mini': INWORLD_TTS_VOICES,
+};
+const DEEPINFRA_DEFAULT_VOICES_BY_MODEL: Record<string, readonly string[]> = {
+  'hexgrad/Kokoro-82M': KOKORO_DEFAULT_VOICES,
+  'canopylabs/orpheus-3b-0.1-ft': ORPHEUS_DEFAULT_VOICES,
+  'sesame/csm-1b': SESAME_DEFAULT_VOICES,
+  'ResembleAI/chatterbox': ['None'],
+  'Zyphra/Zonos-v0.1-hybrid': ['random'],
+  'Zyphra/Zonos-v0.1-transformer': ['random'],
+};
+const replicateVoiceInputKeyCache = new Map<string, ReplicateVoiceInputKey>();
+const replicateOpenApiSchemaPromiseCache = new Map<string, Promise<unknown | null>>();
 
 export const TTS_PROVIDER_DEFINITIONS: TtsProviderDefinition[] = [
   {
@@ -138,11 +170,6 @@ const REPLICATE_MODELS_WITHOUT_NATIVE_SPEED = new Set([
   'qwen/qwen3-tts',
 ]);
 
-const REPLICATE_MODELS_WITH_NATIVE_SPEED = new Set([
-  'minimax/speech-2.8-turbo',
-  'inworld/tts-1.5-mini',
-]);
-
 export function supportsTtsInstructions(model: string | null | undefined): boolean {
   return !!model && MODELS_WITH_INSTRUCTIONS.has(model);
 }
@@ -153,11 +180,7 @@ export function supportsNativeModelSpeed(provider: string | null | undefined, mo
   }
 
   if (provider === 'replicate') {
-    if (REPLICATE_MODELS_WITHOUT_NATIVE_SPEED.has(model)) {
-      return false;
-    }
-
-    return REPLICATE_MODELS_WITH_NATIVE_SPEED.has(model);
+    return !REPLICATE_MODELS_WITHOUT_NATIVE_SPEED.has(model);
   }
 
   return true;
@@ -177,64 +200,263 @@ export function providerSupportsCustomModel(provider: string | null | undefined)
 
 export function getDefaultVoices(provider: string, model: string): string[] {
   if (provider === 'openai') {
-    if (supportsTtsInstructions(model)) {
-      return [...GPT4O_MINI_DEFAULT_VOICES];
-    }
-    return [...OPENAI_DEFAULT_VOICES];
+    return supportsTtsInstructions(model) ? [...GPT4O_MINI_DEFAULT_VOICES] : [...OPENAI_DEFAULT_VOICES];
   }
 
   if (provider === 'custom-openai') {
-    if (isKokoroModel(model)) {
-      return [...KOKORO_DEFAULT_VOICES];
-    }
-    return [...CUSTOM_OPENAI_DEFAULT_VOICES];
+    return isKokoroModel(model) ? [...KOKORO_DEFAULT_VOICES] : [...CUSTOM_OPENAI_DEFAULT_VOICES];
   }
 
   if (provider === 'replicate') {
-    if (model === 'google/gemini-3.1-flash-tts') {
-      return [...GEMINI_FLASH_TTS_VOICES];
-    }
-    if (model === 'minimax/speech-2.8-turbo') {
-      return [...MINIMAX_SPEECH_VOICES];
-    }
-    if (model === 'qwen/qwen3-tts') {
-      return [...QWEN3_TTS_VOICES];
-    }
-    if (model === 'inworld/tts-1.5-mini') {
-      return [...INWORLD_TTS_VOICES];
-    }
-    return ['default'];
+    return REPLICATE_DEFAULT_VOICES_BY_MODEL[model] ? [...REPLICATE_DEFAULT_VOICES_BY_MODEL[model]] : ['default'];
   }
 
   if (provider === 'deepinfra') {
-    if (model === 'hexgrad/Kokoro-82M') {
-      return [...KOKORO_DEFAULT_VOICES];
-    }
-    if (model === 'canopylabs/orpheus-3b-0.1-ft') {
-      return [...ORPHEUS_DEFAULT_VOICES];
-    }
-    if (model === 'sesame/csm-1b') {
-      return [...SESAME_DEFAULT_VOICES];
-    }
-    if (model === 'ResembleAI/chatterbox') {
-      return ['None'];
-    }
-    if (model === 'Zyphra/Zonos-v0.1-hybrid' || model === 'Zyphra/Zonos-v0.1-transformer') {
-      return ['random'];
-    }
-    return [...CUSTOM_OPENAI_DEFAULT_VOICES];
+    return DEEPINFRA_DEFAULT_VOICES_BY_MODEL[model]
+      ? [...DEEPINFRA_DEFAULT_VOICES_BY_MODEL[model]]
+      : [...CUSTOM_OPENAI_DEFAULT_VOICES];
   }
 
   return [...OPENAI_DEFAULT_VOICES];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function parseReplicateModelIdentifier(model: string): {
+  owner: string;
+  name: string;
+  version?: string;
+} | null {
+  const [ref, version] = model.split(':', 2);
+  const segments = ref.split('/');
+  if (segments.length !== 2 || !segments[0] || !segments[1]) {
+    return null;
+  }
+
+  const parsed = {
+    owner: segments[0],
+    name: segments[1],
+  };
+
+  return version
+    ? { ...parsed, version }
+    : parsed;
+}
+
+function extractSchemaStringEnums(schemaNode: unknown, seen = new Set<object>()): string[] {
+  if (!isRecord(schemaNode)) {
+    return [];
+  }
+  if (seen.has(schemaNode)) {
+    return [];
+  }
+  seen.add(schemaNode);
+
+  const values: string[] = [];
+  if (Array.isArray(schemaNode.enum)) {
+    values.push(...schemaNode.enum.filter((value): value is string => typeof value === 'string'));
+  }
+  if (typeof schemaNode.const === 'string') {
+    values.push(schemaNode.const);
+  }
+
+  for (const key of ['anyOf', 'allOf', 'oneOf'] as const) {
+    const branch = schemaNode[key];
+    if (!Array.isArray(branch)) continue;
+    for (const item of branch) {
+      values.push(...extractSchemaStringEnums(item, seen));
+    }
+  }
+
+  if (schemaNode.items) {
+    values.push(...extractSchemaStringEnums(schemaNode.items, seen));
+  }
+
+  return values;
+}
+
+function walkRecordGraph(root: unknown, visit: (node: Record<string, unknown>) => boolean | void): void {
+  if (!isRecord(root)) {
+    return;
+  }
+
+  const stack: Record<string, unknown>[] = [root];
+  const seen = new Set<object>();
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) {
+      continue;
+    }
+    if (seen.has(current)) {
+      continue;
+    }
+    seen.add(current);
+
+    if (visit(current)) {
+      return;
+    }
+
+    for (const value of Object.values(current)) {
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          if (isRecord(item)) {
+            stack.push(item);
+          }
+        }
+      } else if (isRecord(value)) {
+        stack.push(value);
+      }
+    }
+  }
+}
+
+function extractReplicateVoicesFromOpenApiSchema(openApiSchema: unknown): string[] {
+  const voices: string[] = [];
+
+  walkRecordGraph(openApiSchema, (node) => {
+    const properties = node.properties;
+    if (!isRecord(properties)) {
+      return;
+    }
+    for (const key of REPLICATE_VOICE_KEYS) {
+      if (!(key in properties)) continue;
+      voices.push(...extractSchemaStringEnums(properties[key]));
+    }
+  });
+
+  return Array.from(
+    new Set(
+      voices
+        .map((voice) => voice.trim())
+        .filter((voice) => voice.length > 0)
+    )
+  );
+}
+
+function extractReplicateVoiceInputKeyFromOpenApiSchema(openApiSchema: unknown): ReplicateVoiceInputKey | null {
+  let found: ReplicateVoiceInputKey | null = null;
+
+  walkRecordGraph(openApiSchema, (node) => {
+    const properties = node.properties;
+    if (!isRecord(properties)) {
+      return;
+    }
+    for (const key of REPLICATE_VOICE_KEYS) {
+      if (key in properties) {
+        found = key;
+        return true;
+      }
+    }
+  });
+
+  return found;
+}
+
+async function fetchReplicateOpenApiSchema(apiKey: string, model: string): Promise<unknown | null> {
+  const parsedModel = parseReplicateModelIdentifier(model);
+  if (!parsedModel) {
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, 10_000);
+
+  try {
+    const endpoint = parsedModel.version
+      ? `https://api.replicate.com/v1/models/${parsedModel.owner}/${parsedModel.name}/versions/${parsedModel.version}`
+      : `https://api.replicate.com/v1/models/${parsedModel.owner}/${parsedModel.name}`;
+
+    const response = await fetch(endpoint, {
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json();
+    let openApiSchema: unknown = null;
+
+    if (parsedModel.version) {
+      if (isRecord(data)) {
+        openApiSchema = data.openapi_schema;
+      }
+    } else if (isRecord(data) && isRecord(data.latest_version)) {
+      openApiSchema = data.latest_version.openapi_schema;
+    }
+
+    return openApiSchema;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return null;
+    }
+    console.error('Error fetching Replicate model schema:', error);
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function getReplicateOpenApiSchemaCached(apiKey: string, model: string): Promise<unknown | null> {
+  const cachedPromise = replicateOpenApiSchemaPromiseCache.get(model);
+  if (cachedPromise) {
+    return cachedPromise;
+  }
+
+  const fetchPromise = fetchReplicateOpenApiSchema(apiKey, model);
+  replicateOpenApiSchemaPromiseCache.set(model, fetchPromise);
+
+  const schema = await fetchPromise;
+  if (schema === null) {
+    replicateOpenApiSchemaPromiseCache.delete(model);
+  }
+  return schema;
+}
+
+async function fetchReplicateVoices(apiKey: string, model: string): Promise<string[] | null> {
+  const openApiSchema = await getReplicateOpenApiSchemaCached(apiKey, model);
+  const apiVoices = extractReplicateVoicesFromOpenApiSchema(openApiSchema);
+  return apiVoices.length > 0 ? apiVoices : null;
+}
+
+export async function resolveReplicateVoiceInputKey({
+  provider,
+  model,
+  apiKey = '',
+}: ResolveVoicesOptions): Promise<ReplicateVoiceInputKey | null> {
+  if (provider !== 'replicate' || REPLICATE_BUILT_IN_MODELS.has(model) || !apiKey) {
+    return null;
+  }
+
+  const cached = replicateVoiceInputKeyCache.get(model);
+  if (cached) {
+    return cached;
+  }
+
+  const openApiSchema = await getReplicateOpenApiSchemaCached(apiKey, model);
+  const inputKey = extractReplicateVoiceInputKeyFromOpenApiSchema(openApiSchema);
+  if (inputKey) {
+    replicateVoiceInputKeyCache.set(model, inputKey);
+  }
+  return inputKey;
+}
+
 export function resolveVoiceSource(provider: string, model: string): TtsVoiceSource {
-  if (provider === 'deepinfra' && (
-    model === 'ResembleAI/chatterbox' ||
-    model === 'Zyphra/Zonos-v0.1-hybrid' ||
-    model === 'Zyphra/Zonos-v0.1-transformer'
-  )) {
+  if (provider === 'deepinfra' && DEEPINFRA_API_VOICE_MODELS.has(model)) {
     return 'deepinfra-api';
+  }
+
+  if (provider === 'replicate' && parseReplicateModelIdentifier(model) !== null) {
+    return 'replicate-api';
   }
 
   if (provider === 'custom-openai') {
@@ -330,6 +552,16 @@ export async function resolveVoices({ provider, model, apiKey = '', baseUrl = ''
       return defaultVoices;
     }
     const apiVoices = await fetchCustomOpenAiVoices(baseUrl, apiKey);
+    if (apiVoices !== null) {
+      return apiVoices;
+    }
+  }
+
+  if (voiceSource === 'replicate-api') {
+    if (!apiKey) {
+      return defaultVoices;
+    }
+    const apiVoices = await fetchReplicateVoices(apiKey, model);
     if (apiVoices !== null) {
       return apiVoices;
     }

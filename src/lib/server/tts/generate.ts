@@ -2,7 +2,12 @@ import OpenAI from 'openai';
 import Replicate from 'replicate';
 import { SpeechCreateParams } from 'openai/resources/audio/speech.mjs';
 import { isKokoroModel } from '@/lib/shared/kokoro';
-import { supportsNativeModelSpeed, supportsTtsInstructions } from '@/lib/shared/tts-provider-catalog';
+import {
+  REPLICATE_KOKORO_82M_VERSIONED_MODEL,
+  resolveReplicateVoiceInputKey,
+  supportsNativeModelSpeed,
+  supportsTtsInstructions,
+} from '@/lib/shared/tts-provider-catalog';
 import { LRUCache } from 'lru-cache';
 import { createHash } from 'crypto';
 import { access, readFile } from 'fs/promises';
@@ -46,7 +51,6 @@ type InflightEntry = {
   consumers: number;
 };
 
-let replicateQueue: Promise<void> = Promise.resolve();
 let replicateBlockedUntilMs = 0;
 
 const TTS_CACHE_MAX_SIZE_BYTES = Number(process.env.TTS_CACHE_MAX_SIZE_BYTES || 256 * 1024 * 1024); // 256MB
@@ -106,8 +110,14 @@ function getUpstreamRetryAfterSeconds(error: unknown): number | undefined {
   const retryAfterHeader = response?.headers?.get?.('retry-after');
   if (!retryAfterHeader) return undefined;
   const parsed = Number(retryAfterHeader);
-  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
-  return parsed;
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+  const parsedDateMs = Date.parse(retryAfterHeader);
+  if (!Number.isFinite(parsedDateMs)) return undefined;
+  const seconds = (parsedDateMs - Date.now()) / 1000;
+  if (seconds <= 0) return undefined;
+  return Math.ceil(seconds);
 }
 
 function applyReplicateCooldown(cooldownMs: number) {
@@ -117,33 +127,22 @@ function applyReplicateCooldown(cooldownMs: number) {
 }
 
 async function runWithReplicateGate<T>(signal: AbortSignal, operation: () => Promise<T>): Promise<T> {
-  let release: (() => void) | undefined;
-  const prev = replicateQueue;
-  replicateQueue = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-
-  await prev;
-  try {
-    const waitMs = Math.max(0, replicateBlockedUntilMs - Date.now());
-    if (waitMs > 0) {
-      await sleepWithSignal(waitMs, signal);
-    }
-    return await operation();
-  } finally {
-    release?.();
+  const waitMs = Math.max(0, replicateBlockedUntilMs - Date.now());
+  if (waitMs > 0) {
+    await sleepWithSignal(waitMs, signal);
   }
+  return operation();
 }
 
 function resolveTTSRequest(input: ServerTTSRequest): ResolvedServerTTSRequest {
   const provider = input.provider || 'openai';
   const rawModel = provider === 'deepinfra' && !input.model ? 'hexgrad/Kokoro-82M'
-    : provider === 'replicate' && !input.model ? 'google/gemini-3.1-flash-tts'
+    : provider === 'replicate' && !input.model ? REPLICATE_KOKORO_82M_VERSIONED_MODEL
     : input.model;
   const model = (rawModel ?? 'gpt-4o-mini-tts') as SpeechCreateParams['model'];
 
   const normalizedVoice = (
-    !isKokoroModel(model as string) && input.voice.includes('+')
+    (provider === 'replicate' || !isKokoroModel(model as string)) && input.voice.includes('+')
       ? input.voice.split('+')[0].trim()
       : input.voice
   ) as string;
@@ -263,7 +262,7 @@ async function fetchTTSBufferWithRetry(
   }
 }
 
-function buildReplicateInput(request: ResolvedServerTTSRequest): Record<string, unknown> {
+async function buildReplicateInput(request: ResolvedServerTTSRequest): Promise<Record<string, unknown>> {
   const model = request.model as string;
 
   if (model === 'google/gemini-3.1-flash-tts') {
@@ -313,12 +312,38 @@ function buildReplicateInput(request: ResolvedServerTTSRequest): Record<string, 
     return input;
   }
 
-  return { text: request.text };
+  const input: Record<string, unknown> = { text: request.text };
+
+  const voiceInputKey = await resolveReplicateVoiceInputKey({
+    provider: 'replicate',
+    model,
+    apiKey: request.apiKey,
+  });
+  if (voiceInputKey) {
+    input[voiceInputKey] = request.voice;
+  } else {
+    input.voice = request.voice;
+  }
+
+  // Best-effort generic fields for custom models.
+  if (request.format !== 'mp3') {
+    input.audio_format = 'wav';
+  }
+
+  if (request.speed !== 1) {
+    input.speed = request.speed;
+  }
+
+  if (request.instructions) {
+    input.instructions = request.instructions;
+  }
+
+  return input;
 }
 
 async function runReplicateRequest(request: ResolvedServerTTSRequest, signal: AbortSignal): Promise<Buffer> {
   const replicate = new Replicate({ auth: request.apiKey });
-  const input = buildReplicateInput(request);
+  const input = await buildReplicateInput(request);
   const modelId = request.model as `${string}/${string}`;
 
   return runWithReplicateGate(signal, async () => {
@@ -333,7 +358,18 @@ async function runReplicateRequest(request: ResolvedServerTTSRequest, signal: Ab
         const audioUrl = typeof output === 'string' ? output : String(output);
         const audioResponse = await fetch(audioUrl, { signal });
         if (!audioResponse.ok) {
-          throw new Error(`Failed to fetch Replicate audio: ${audioResponse.status}`);
+          const error = new Error(`Failed to fetch Replicate audio: ${audioResponse.status}`) as Error & {
+            status?: number;
+            statusCode?: number;
+            response?: { status: number; headers: Headers };
+          };
+          error.status = audioResponse.status;
+          error.statusCode = audioResponse.status;
+          error.response = {
+            status: audioResponse.status,
+            headers: audioResponse.headers,
+          };
+          throw error;
         }
         const buffer = await audioResponse.arrayBuffer();
         return Buffer.from(buffer);

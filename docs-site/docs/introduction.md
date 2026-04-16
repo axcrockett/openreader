@@ -18,7 +18,7 @@ It supports multiple TTS providers including OpenAI, Replicate, DeepInfra, and c
   - [**Orpheus-FastAPI**](https://github.com/Lex-au/Orpheus-FastAPI)
   - **Custom OpenAI-compatible**: any TTS API with `/v1/audio/voices` and `/v1/audio/speech` endpoints
   - **Cloud TTS providers**:
-    - [**Replicate**](https://replicate.com/explore): `google/gemini-3.1-flash-tts`, `minimax/speech-2.8-turbo`, `qwen/qwen3-tts`, and `inworld/tts-1.5-mini`
+    - [**Replicate**](https://replicate.com/explore): includes a built-in catalog and supports any Replicate model ID via `Other`
     - [**DeepInfra**](https://deepinfra.com/models/text-to-speech): Kokoro-82M and other hosted models
     - [**OpenAI API**](https://platform.openai.com/docs/pricing#transcription-and-speech): `tts-1`, `tts-1-hd`, and `gpt-4o-mini-tts`
 - 🛜 **Server-side Document Storage**

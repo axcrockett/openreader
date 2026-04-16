@@ -66,8 +66,14 @@ function getUpstreamRetryAfterSeconds(error: unknown): number | undefined {
   const retryAfterHeader = response?.headers?.get?.('retry-after');
   if (!retryAfterHeader) return undefined;
   const parsed = Number(retryAfterHeader);
-  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
-  return Math.ceil(parsed);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return Math.ceil(parsed);
+  }
+  const parsedDateMs = Date.parse(retryAfterHeader);
+  if (!Number.isFinite(parsedDateMs)) return undefined;
+  const seconds = (parsedDateMs - Date.now()) / 1000;
+  if (seconds <= 0) return undefined;
+  return Math.ceil(seconds);
 }
 
 export async function POST(req: NextRequest) {

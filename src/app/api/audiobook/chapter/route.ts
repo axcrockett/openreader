@@ -307,9 +307,16 @@ export async function POST(request: NextRequest) {
       existingSettings = null;
     }
 
+    const normalizedExistingSettings = existingSettings ? normalizeNativeSpeedForSettings(existingSettings) : undefined;
     const incomingSettings = data.settings ? normalizeNativeSpeedForSettings(data.settings) : undefined;
-    if (existingSettings && hasChapters && incomingSettings) {
-      const normalizedExistingSettings = normalizeNativeSpeedForSettings(existingSettings);
+    const mergedSettings = (normalizedExistingSettings || incomingSettings)
+      ? normalizeNativeSpeedForSettings({
+          ...(normalizedExistingSettings || {}),
+          ...(incomingSettings || {}),
+        } as AudiobookGenerationSettings)
+      : undefined;
+
+    if (normalizedExistingSettings && hasChapters && incomingSettings) {
       const mismatch =
         normalizedExistingSettings.ttsProvider !== incomingSettings.ttsProvider ||
         normalizedExistingSettings.ttsModel !== incomingSettings.ttsModel ||
@@ -330,10 +337,9 @@ export async function POST(request: NextRequest) {
 
     const format: TTSAudiobookFormat =
       (existingFormats.values().next().value as TTSAudiobookFormat | undefined) ??
-      existingSettings?.format ??
-      incomingSettings?.format ??
+      mergedSettings?.format ??
       requestedFormat;
-    const rawPostSpeed = incomingSettings?.postSpeed ?? existingSettings?.postSpeed ?? 1;
+    const rawPostSpeed = mergedSettings?.postSpeed ?? 1;
     const postSpeed = Number.isFinite(Number(rawPostSpeed)) ? Number(rawPostSpeed) : 1;
 
     let chapterIndex: number;
@@ -357,22 +363,20 @@ export async function POST(request: NextRequest) {
     }
 
     const provider = request.headers.get('x-tts-provider')
-      || incomingSettings?.ttsProvider
-      || existingSettings?.ttsProvider
+      || mergedSettings?.ttsProvider
       || 'openai';
     const openApiKey = request.headers.get('x-openai-key') || process.env.API_KEY || 'none';
     const openApiBaseUrl = request.headers.get('x-openai-base-url') || process.env.API_BASE;
-    const model = incomingSettings?.ttsModel ?? existingSettings?.ttsModel;
-    const voice = incomingSettings?.voice
-      || existingSettings?.voice
+    const model = mergedSettings?.ttsModel;
+    const voice = mergedSettings?.voice
       || (provider === 'openai'
         ? 'alloy'
         : provider === 'deepinfra'
           ? 'af_bella'
           : 'af_sarah');
-    const rawNativeSpeed = incomingSettings?.nativeSpeed ?? existingSettings?.nativeSpeed ?? 1;
+    const rawNativeSpeed = mergedSettings?.nativeSpeed ?? 1;
     const nativeSpeed = Number.isFinite(Number(rawNativeSpeed)) ? Number(rawNativeSpeed) : 1;
-    const instructions = incomingSettings?.ttsInstructions ?? existingSettings?.ttsInstructions;
+    const instructions = mergedSettings?.ttsInstructions;
 
     if (authEnabled && userId && isTtsRateLimitEnabled()) {
       const isAnonymous = Boolean(user?.isAnonymous);

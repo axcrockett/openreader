@@ -11,7 +11,7 @@ Use Replicate's hosted TTS models as your provider.
 ```env
 API_KEY=r8_...
 NEXT_PUBLIC_DEFAULT_TTS_PROVIDER=replicate
-NEXT_PUBLIC_DEFAULT_TTS_MODEL=google/gemini-3.1-flash-tts
+NEXT_PUBLIC_DEFAULT_TTS_MODEL=alphanumericuser/kokoro-82m:89b6fa84e4fa2dd6bd3a96be3e1f12827a3516c9fda8fddbac7a0be131c9a6f5
 ```
 
 **Or in-app via Settings -> TTS Provider:**
@@ -25,11 +25,12 @@ Settings modal values override env vars. See [TTS Providers](../tts-providers) f
 ## Notes
 
 - Built-in Replicate models:
+  - `alphanumericuser/kokoro-82m:89b6fa84e4fa2dd6bd3a96be3e1f12827a3516c9fda8fddbac7a0be131c9a6f5`
   - `google/gemini-3.1-flash-tts`
   - `minimax/speech-2.8-turbo`
   - `qwen/qwen3-tts`
   - `inworld/tts-1.5-mini`
-- You can also choose `Other` and enter any Replicate model ID (for example `owner/model-name`).
+- You can also choose `Other` and enter any Replicate model ID (for example `owner/model-name` or `owner/model-name:version`).
 - Native model speed is not available on all Replicate models; OpenReader hides/disables native speed controls where unsupported.
 - TTS requests are sent from the server, not the browser. The API key is never exposed to clients.
 

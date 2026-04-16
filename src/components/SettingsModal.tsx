@@ -36,7 +36,7 @@ import { deleteDocuments, mimeTypeForDoc, uploadDocuments } from '@/lib/client/a
 import { cacheStoredDocumentFromBytes, clearDocumentCache } from '@/lib/client/cache/documents';
 import { clearAllDocumentPreviewCaches, clearInMemoryDocumentPreviewCache } from '@/lib/client/cache/previews';
 import { resolveTtsSettingsViewModel } from '@/lib/client/settings/tts-settings';
-import { supportsTtsInstructions } from '@/lib/shared/tts-provider-catalog';
+import { REPLICATE_KOKORO_82M_VERSIONED_MODEL, supportsTtsInstructions } from '@/lib/shared/tts-provider-catalog';
 
 const enableDestructiveDelete = process.env.NEXT_PUBLIC_ENABLE_DESTRUCTIVE_DELETE_ACTIONS !== 'false';
 const showAllDeepInfra = process.env.NEXT_PUBLIC_SHOW_ALL_DEEPINFRA_MODELS !== 'false';
@@ -392,6 +392,12 @@ export function SettingsModal({ className = '' }: { className?: string }) {
   const btnPrimary = `${btnBase} bg-accent text-background hover:bg-secondary-accent hover:scale-[1.04]`;
   const btnSecondary = `${btnBase} bg-background text-foreground hover:bg-offbase hover:text-accent hover:scale-[1.04]`;
   const btnOutline = `${btnBase} bg-background border border-offbase text-foreground hover:bg-offbase hover:text-accent hover:scale-[1.02]`;
+  const shouldShowBaseUrl = localTTSProvider !== 'replicate'
+    && (localTTSProvider === 'custom-openai' || !localBaseUrl || localBaseUrl === '');
+  const selectedModel = ttsModels.find(m => m.id === selectedModelId) || ttsModels[0];
+  const selectedModelVersion = selectedModel?.id?.includes(':')
+    ? selectedModel.id.slice(selectedModel.id.indexOf(':'))
+    : '';
 
   return (
     <>
@@ -508,7 +514,7 @@ export function SettingsModal({ className = '' }: { className?: string }) {
                                   setModelValue('kokoro');
                                   setLocalBaseUrl('');
                                 } else if (provider.id === 'replicate') {
-                                  setModelValue('google/gemini-3.1-flash-tts');
+                                  setModelValue(REPLICATE_KOKORO_82M_VERSIONED_MODEL);
                                   setLocalBaseUrl('');
                                 } else if (provider.id === 'deepinfra') {
                                   setModelValue('hexgrad/Kokoro-82M');
@@ -562,7 +568,7 @@ export function SettingsModal({ className = '' }: { className?: string }) {
                             </Listbox>
                           </div>
 
-                          {localTTSProvider !== 'replicate' && (localTTSProvider === 'custom-openai' || !localBaseUrl || localBaseUrl === '') && (
+                          {shouldShowBaseUrl && (
                             <div className="space-y-1.5">
                               <label className="block text-sm font-medium text-foreground">
                                 API Base URL
@@ -607,9 +613,20 @@ export function SettingsModal({ className = '' }: { className?: string }) {
                                 }}
                               >
                                 <ListboxButton className="relative w-full cursor-pointer rounded-lg bg-background py-2 pl-3 pr-10 text-left text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-accent transform transition-transform duration-200 ease-in-out hover:scale-[1.005] hover:text-accent hover:bg-offbase">
-                                  <span className="block truncate">
-                                    {ttsModels.find(m => m.id === selectedModelId)?.name || 'Select Model'}
-                                  </span>
+                                  {selectedModel ? (
+                                    <span className="block">
+                                      <span className="block truncate">
+                                        {selectedModel.name}
+                                      </span>
+                                      {selectedModelVersion && (
+                                        <span className="block truncate text-xs text-muted">
+                                          {selectedModelVersion}
+                                        </span>
+                                      )}
+                                    </span>
+                                  ) : (
+                                    <span className="block truncate">Select Model</span>
+                                  )}
                                   <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">
                                     <ChevronUpDownIcon className="h-5 w-5 text-muted" />
                                   </span>
@@ -631,14 +648,19 @@ export function SettingsModal({ className = '' }: { className?: string }) {
                                           `relative cursor-pointer select-none py-2 pl-10 pr-4 ${active ? 'bg-offbase text-accent' : 'text-foreground'}`
                                         }
                                         value={model}
-                                      >
-                                        {({ selected }) => (
-                                          <>
-                                            <span className={`block truncate ${selected ? 'font-medium' : 'font-normal'}`}>
-                                              {model.name}
-                                            </span>
-                                            {selected && (
-                                              <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-accent">
+                                    >
+                                      {({ selected }) => (
+                                        <>
+                                          <span className={`block ${selected ? 'font-medium' : 'font-normal'}`}>
+                                            <span className="block truncate">{model.name}</span>
+                                            {model.id.includes(':') && (
+                                              <span className="block truncate text-xs text-muted">
+                                                {model.id.slice(model.id.indexOf(':'))}
+                                              </span>
+                                            )}
+                                          </span>
+                                          {selected && (
+                                            <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-accent">
                                                 <CheckIcon className="h-5 w-5" />
                                               </span>
                                             )}
