@@ -29,6 +29,7 @@ import { getOpenReaderTestNamespace, getUnclaimedUserIdForNamespace } from '@/li
 import { buildAllowedAudiobookUserIds, pickAudiobookOwner } from '@/lib/server/audiobooks/user-scope';
 import { getFFmpegPath } from '@/lib/server/audiobooks/ffmpeg-bin';
 import { generateTTSBuffer } from '@/lib/server/tts/generate';
+import { supportsNativeModelSpeed } from '@/lib/shared/tts-provider-catalog';
 import type { AudiobookGenerationSettings } from '@/types/client';
 import type { TTSAudiobookFormat } from '@/types/tts';
 
@@ -40,7 +41,7 @@ interface ConversionRequest {
   bookId?: string;
   format?: TTSAudiobookFormat;
   chapterIndex?: number;
-  settings?: AudiobookGenerationSettings;
+  settings?: unknown;
 }
 
 type ChapterObject = {
@@ -90,6 +91,35 @@ function s3NotConfiguredResponse(): NextResponse {
     { error: 'Audiobooks storage is not configured. Set S3_* environment variables.' },
     { status: 503 },
   );
+}
+
+function normalizeNativeSpeedForSettings(settings: AudiobookGenerationSettings): AudiobookGenerationSettings {
+  return supportsNativeModelSpeed(settings.ttsProvider, settings.ttsModel)
+    ? settings
+    : { ...settings, nativeSpeed: 1 };
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isAudiobookFormat(value: unknown): value is TTSAudiobookFormat {
+  return value === 'mp3' || value === 'm4b';
+}
+
+function isAudiobookGenerationSettings(value: unknown): value is AudiobookGenerationSettings {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return typeof record.ttsProvider === 'string'
+    && typeof record.ttsModel === 'string'
+    && typeof record.voice === 'string'
+    && isFiniteNumber(record.nativeSpeed)
+    && isFiniteNumber(record.postSpeed)
+    && isAudiobookFormat(record.format)
+    && (record.ttsInstructions === undefined || typeof record.ttsInstructions === 'string');
 }
 
 function chapterFileMimeType(format: TTSAudiobookFormat): string {
@@ -290,28 +320,53 @@ export async function POST(request: NextRequest) {
     const existingChapters = listChapterObjects(objectNames);
     const hasChapters = existingChapters.length > 0;
 
-    let existingSettings: AudiobookGenerationSettings | null = null;
+    let normalizedExistingSettings: AudiobookGenerationSettings | undefined;
     try {
-      existingSettings = JSON.parse(
+      const parsedSettings = JSON.parse(
         (await getAudiobookObjectBuffer(bookId, storageUserId, 'audiobook.meta.json', testNamespace)).toString('utf8'),
-      ) as AudiobookGenerationSettings;
+      ) as unknown;
+      if (!isAudiobookGenerationSettings(parsedSettings)) {
+        console.error('Invalid audiobook.meta.json settings payload', { bookId, storageUserId });
+        return NextResponse.json({ error: 'Invalid audiobook metadata settings' }, { status: 500 });
+      }
+      normalizedExistingSettings = normalizeNativeSpeedForSettings(parsedSettings);
     } catch (error) {
       if (!isMissingBlobError(error)) throw error;
-      existingSettings = null;
+      normalizedExistingSettings = undefined;
     }
 
-    const incomingSettings = data.settings;
-    if (existingSettings && hasChapters && incomingSettings) {
+    const incomingSettings = (() => {
+      if (data.settings === undefined) {
+        return undefined;
+      }
+      if (!isAudiobookGenerationSettings(data.settings)) {
+        return null;
+      }
+      return normalizeNativeSpeedForSettings(data.settings);
+    })();
+
+    if (incomingSettings === null) {
+      return NextResponse.json({ error: 'Invalid audiobook settings payload' }, { status: 400 });
+    }
+
+    const mergedSettings = normalizedExistingSettings && incomingSettings
+      ? normalizeNativeSpeedForSettings({
+          ...normalizedExistingSettings,
+          ...incomingSettings,
+        })
+      : normalizedExistingSettings ?? incomingSettings;
+
+    if (normalizedExistingSettings && hasChapters && incomingSettings) {
       const mismatch =
-        existingSettings.ttsProvider !== incomingSettings.ttsProvider ||
-        existingSettings.ttsModel !== incomingSettings.ttsModel ||
-        existingSettings.voice !== incomingSettings.voice ||
-        existingSettings.nativeSpeed !== incomingSettings.nativeSpeed ||
-        existingSettings.postSpeed !== incomingSettings.postSpeed ||
-        existingSettings.format !== incomingSettings.format ||
-        (existingSettings.ttsInstructions || '') !== (incomingSettings.ttsInstructions || '');
+        normalizedExistingSettings.ttsProvider !== incomingSettings.ttsProvider ||
+        normalizedExistingSettings.ttsModel !== incomingSettings.ttsModel ||
+        normalizedExistingSettings.voice !== incomingSettings.voice ||
+        normalizedExistingSettings.nativeSpeed !== incomingSettings.nativeSpeed ||
+        normalizedExistingSettings.postSpeed !== incomingSettings.postSpeed ||
+        normalizedExistingSettings.format !== incomingSettings.format ||
+        (normalizedExistingSettings.ttsInstructions || '') !== (incomingSettings.ttsInstructions || '');
       if (mismatch) {
-        return NextResponse.json({ error: 'Audiobook settings mismatch', settings: existingSettings }, { status: 409 });
+        return NextResponse.json({ error: 'Audiobook settings mismatch', settings: normalizedExistingSettings }, { status: 409 });
       }
     }
 
@@ -322,10 +377,9 @@ export async function POST(request: NextRequest) {
 
     const format: TTSAudiobookFormat =
       (existingFormats.values().next().value as TTSAudiobookFormat | undefined) ??
-      existingSettings?.format ??
-      incomingSettings?.format ??
+      mergedSettings?.format ??
       requestedFormat;
-    const rawPostSpeed = incomingSettings?.postSpeed ?? existingSettings?.postSpeed ?? 1;
+    const rawPostSpeed = mergedSettings?.postSpeed ?? 1;
     const postSpeed = Number.isFinite(Number(rawPostSpeed)) ? Number(rawPostSpeed) : 1;
 
     let chapterIndex: number;
@@ -349,22 +403,20 @@ export async function POST(request: NextRequest) {
     }
 
     const provider = request.headers.get('x-tts-provider')
-      || incomingSettings?.ttsProvider
-      || existingSettings?.ttsProvider
+      || mergedSettings?.ttsProvider
       || 'openai';
     const openApiKey = request.headers.get('x-openai-key') || process.env.API_KEY || 'none';
     const openApiBaseUrl = request.headers.get('x-openai-base-url') || process.env.API_BASE;
-    const model = incomingSettings?.ttsModel ?? existingSettings?.ttsModel;
-    const voice = incomingSettings?.voice
-      || existingSettings?.voice
+    const model = mergedSettings?.ttsModel;
+    const voice = mergedSettings?.voice
       || (provider === 'openai'
         ? 'alloy'
         : provider === 'deepinfra'
           ? 'af_bella'
           : 'af_sarah');
-    const rawNativeSpeed = incomingSettings?.nativeSpeed ?? existingSettings?.nativeSpeed ?? 1;
+    const rawNativeSpeed = mergedSettings?.nativeSpeed ?? 1;
     const nativeSpeed = Number.isFinite(Number(rawNativeSpeed)) ? Number(rawNativeSpeed) : 1;
-    const instructions = incomingSettings?.ttsInstructions ?? existingSettings?.ttsInstructions;
+    const instructions = mergedSettings?.ttsInstructions;
 
     if (authEnabled && userId && isTtsRateLimitEnabled()) {
       const isAnonymous = Boolean(user?.isAnonymous);
@@ -499,7 +551,7 @@ export async function POST(request: NextRequest) {
     await deleteAudiobookObject(bookId, storageUserId, 'complete.mp3.manifest.json', testNamespace).catch(() => {});
     await deleteAudiobookObject(bookId, storageUserId, 'complete.m4b.manifest.json', testNamespace).catch(() => {});
 
-    if (!existingSettings && incomingSettings) {
+    if (!normalizedExistingSettings && incomingSettings) {
       await putAudiobookObject(
         bookId,
         storageUserId,

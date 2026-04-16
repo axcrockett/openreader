@@ -14,6 +14,7 @@ import {
   getCachedTTSBuffer,
   getTTSContentType,
 } from '@/lib/server/tts/generate';
+import { getUpstreamRetryAfterSeconds, getUpstreamStatus } from '@/lib/server/tts/upstream-response';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -47,14 +48,6 @@ function formatLimitForHint(limit: number): string {
   }
   if (limit >= 1_000) return `${Math.round(limit / 1_000)}K`;
   return String(limit);
-}
-
-function getUpstreamStatus(error: unknown): number | undefined {
-  if (typeof error !== 'object' || error === null) return undefined;
-  const rec = error as Record<string, unknown>;
-  if (typeof rec.status === 'number') return rec.status;
-  if (typeof rec.statusCode === 'number') return rec.statusCode;
-  return undefined;
 }
 
 export async function POST(req: NextRequest) {
@@ -221,14 +214,18 @@ export async function POST(req: NextRequest) {
 
     const upstreamStatus = getUpstreamStatus(error);
     if (upstreamStatus === 429) {
+      const retryAfterSeconds = getUpstreamRetryAfterSeconds(error);
       const problem: ProblemDetails = {
         type: PROBLEM_TYPES.upstreamRateLimited,
         title: 'Upstream rate limited',
         status: 429,
-        detail: 'The TTS provider is rate limiting requests. Please try again shortly.',
+        detail: retryAfterSeconds
+          ? `The TTS provider is rate limiting requests. Please retry in about ${retryAfterSeconds}s.`
+          : 'The TTS provider is rate limiting requests. Please try again shortly.',
         code: 'UPSTREAM_RATE_LIMIT',
         provider: providerForError ?? undefined,
         upstreamStatus,
+        retryAfterSeconds,
         instance: req.nextUrl.pathname,
       };
 
@@ -236,11 +233,16 @@ export async function POST(req: NextRequest) {
         status: 429,
         headers: {
           'Content-Type': 'application/problem+json',
+          ...(retryAfterSeconds ? { 'Retry-After': String(retryAfterSeconds) } : {}),
         },
       });
     }
 
-    console.warn('Error generating TTS:', error);
+    const statusHint = getUpstreamStatus(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `Error generating TTS${typeof statusHint === 'number' ? ` (upstream ${statusHint})` : ''}: ${errorMessage}`,
+    );
     const errorBody: TTSError = {
       code: 'TTS_GENERATION_FAILED',
       message: 'Failed to generate audio',

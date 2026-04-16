@@ -8,7 +8,7 @@ OpenReader is an open source text-to-speech document reader built with Next.js. 
 
 > Previously named **OpenReader-WebUI**.
 
-It supports multiple TTS providers including OpenAI, DeepInfra, and custom OpenAI-compatible endpoints such as [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI), [KittenTTS-FastAPI](https://github.com/richardr1126/KittenTTS-FastAPI), and [Orpheus-FastAPI](https://github.com/Lex-au/Orpheus-FastAPI).
+It supports multiple TTS providers including OpenAI, Replicate, DeepInfra, and custom OpenAI-compatible endpoints such as [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI), [KittenTTS-FastAPI](https://github.com/richardr1126/KittenTTS-FastAPI), and [Orpheus-FastAPI](https://github.com/Lex-au/Orpheus-FastAPI).
 
 ## ✨ Highlights
 
@@ -18,6 +18,7 @@ It supports multiple TTS providers including OpenAI, DeepInfra, and custom OpenA
   - [**Orpheus-FastAPI**](https://github.com/Lex-au/Orpheus-FastAPI)
   - **Custom OpenAI-compatible**: any TTS API with `/v1/audio/voices` and `/v1/audio/speech` endpoints
   - **Cloud TTS providers**:
+    - [**Replicate**](https://replicate.com/explore): includes a built-in catalog and supports any Replicate model ID via `Other`
     - [**DeepInfra**](https://deepinfra.com/models/text-to-speech): Kokoro-82M and other hosted models
     - [**OpenAI API**](https://platform.openai.com/docs/pricing#transcription-and-speech): `tts-1`, `tts-1-hd`, and `gpt-4o-mini-tts`
 - 🛜 **Server-side Document Storage**

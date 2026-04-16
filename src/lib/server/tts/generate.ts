@@ -1,7 +1,14 @@
 import OpenAI from 'openai';
+import Replicate from 'replicate';
 import { SpeechCreateParams } from 'openai/resources/audio/speech.mjs';
 import { isKokoroModel } from '@/lib/shared/kokoro';
-import { supportsTtsInstructions } from '@/lib/shared/tts-provider-catalog';
+import {
+  REPLICATE_KOKORO_82M_VERSIONED_MODEL,
+  resolveReplicateVoiceInputKey,
+  supportsNativeModelSpeed,
+  supportsTtsInstructions,
+} from '@/lib/shared/tts-provider-catalog';
+import { getUpstreamRetryAfterSeconds, getUpstreamStatus } from '@/lib/server/tts/upstream-response';
 import { LRUCache } from 'lru-cache';
 import { createHash } from 'crypto';
 import { access, readFile } from 'fs/promises';
@@ -45,6 +52,8 @@ type InflightEntry = {
   consumers: number;
 };
 
+let replicateBlockedUntilMs = 0;
+
 const TTS_CACHE_MAX_SIZE_BYTES = Number(process.env.TTS_CACHE_MAX_SIZE_BYTES || 256 * 1024 * 1024); // 256MB
 const TTS_CACHE_TTL_MS = Number(process.env.TTS_CACHE_TTL_MS || 1000 * 60 * 30); // 30 minutes
 
@@ -63,27 +72,58 @@ function sleep(ms: number) {
   return new Promise((res) => setTimeout(res, ms));
 }
 
-function getUpstreamStatus(error: unknown): number | undefined {
-  if (typeof error !== 'object' || error === null) return undefined;
-  const rec = error as Record<string, unknown>;
-  if (typeof rec.status === 'number') return rec.status;
-  if (typeof rec.statusCode === 'number') return rec.statusCode;
-  return undefined;
+function sleepWithSignal(ms: number, signal: AbortSignal): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  if (signal.aborted) {
+    throw new DOMException('The operation was aborted.', 'AbortError');
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+      reject(new DOMException('The operation was aborted.', 'AbortError'));
+    };
+
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function applyReplicateCooldown(cooldownMs: number) {
+  if (!Number.isFinite(cooldownMs) || cooldownMs <= 0) return;
+  const next = Date.now() + cooldownMs;
+  replicateBlockedUntilMs = Math.max(replicateBlockedUntilMs, next);
+}
+
+async function runWithReplicateGate<T>(signal: AbortSignal, operation: () => Promise<T>): Promise<T> {
+  const waitMs = Math.max(0, replicateBlockedUntilMs - Date.now());
+  if (waitMs > 0) {
+    await sleepWithSignal(waitMs, signal);
+  }
+  return operation();
 }
 
 function resolveTTSRequest(input: ServerTTSRequest): ResolvedServerTTSRequest {
   const provider = input.provider || 'openai';
-  const rawModel = provider === 'deepinfra' && !input.model ? 'hexgrad/Kokoro-82M' : input.model;
+  const rawModel = provider === 'deepinfra' && !input.model ? 'hexgrad/Kokoro-82M'
+    : provider === 'replicate' && !input.model ? REPLICATE_KOKORO_82M_VERSIONED_MODEL
+    : input.model;
   const model = (rawModel ?? 'gpt-4o-mini-tts') as SpeechCreateParams['model'];
 
   const normalizedVoice = (
-    !isKokoroModel(model as string) && input.voice.includes('+')
+    (provider === 'replicate' || !isKokoroModel(model as string)) && input.voice.includes('+')
       ? input.voice.split('+')[0].trim()
       : input.voice
   ) as string;
 
   const format = input.format || 'mp3';
-  const speed = Number.isFinite(Number(input.speed)) ? Number(input.speed) : 1;
+  const requestedSpeed = Number.isFinite(Number(input.speed)) ? Number(input.speed) : 1;
+  const speed = supportsNativeModelSpeed(provider, model as string) ? requestedSpeed : 1;
   const instructions = supportsTtsInstructions(model as string) && input.instructions
     ? input.instructions
     : undefined;
@@ -196,9 +236,148 @@ async function fetchTTSBufferWithRetry(
   }
 }
 
+async function buildReplicateInput(request: ResolvedServerTTSRequest): Promise<Record<string, unknown>> {
+  const model = request.model as string;
+
+  if (model === 'google/gemini-3.1-flash-tts') {
+    const input: Record<string, unknown> = {
+      text: request.text,
+      voice: request.voice,
+    };
+    if (request.instructions) {
+      input.prompt = request.instructions;
+    }
+    return input;
+  }
+
+  if (model === 'minimax/speech-2.8-turbo') {
+    const input: Record<string, unknown> = {
+      text: request.text,
+      voice_id: request.voice,
+      audio_format: request.format === 'mp3' ? 'mp3' : 'wav',
+    };
+    if (request.speed !== 1) {
+      input.speed = Math.max(0.5, Math.min(2.0, request.speed));
+    }
+    return input;
+  }
+
+  if (model === 'qwen/qwen3-tts') {
+    const input: Record<string, unknown> = {
+      text: request.text,
+      mode: 'custom_voice',
+      speaker: request.voice,
+    };
+    if (request.instructions) {
+      input.style_instruction = request.instructions;
+    }
+    return input;
+  }
+
+  if (model === 'inworld/tts-1.5-mini') {
+    const input: Record<string, unknown> = {
+      text: request.text,
+      voice_id: request.voice,
+      audio_format: request.format === 'mp3' ? 'mp3' : 'wav',
+    };
+    if (request.speed !== 1) {
+      input.speaking_rate = request.speed;
+    }
+    return input;
+  }
+
+  const input: Record<string, unknown> = { text: request.text };
+
+  const voiceInputKey = await resolveReplicateVoiceInputKey({
+    provider: 'replicate',
+    model,
+    apiKey: request.apiKey,
+  });
+  if (voiceInputKey) {
+    input[voiceInputKey] = request.voice;
+  } else {
+    input.voice = request.voice;
+  }
+
+  // Best-effort generic fields for custom models.
+  if (request.format !== 'mp3') {
+    input.audio_format = 'wav';
+  }
+
+  if (request.speed !== 1) {
+    input.speed = request.speed;
+  }
+
+  if (request.instructions) {
+    input.instructions = request.instructions;
+  }
+
+  return input;
+}
+
+async function runReplicateRequest(request: ResolvedServerTTSRequest, signal: AbortSignal): Promise<Buffer> {
+  const replicate = new Replicate({ auth: request.apiKey });
+  const input = await buildReplicateInput(request);
+  const modelId = request.model as `${string}/${string}`;
+
+  return runWithReplicateGate(signal, async () => {
+    const maxRetries = Number(process.env.TTS_MAX_RETRIES ?? 2);
+    let attempt = 0;
+
+    for (; ;) {
+      try {
+        const output = await replicate.run(modelId, { input, signal }) as unknown;
+
+        // Output is a URI string pointing to the generated audio file
+        const audioUrl = typeof output === 'string' ? output : String(output);
+        const audioResponse = await fetch(audioUrl, { signal });
+        if (!audioResponse.ok) {
+          const error = new Error(`Failed to fetch Replicate audio: ${audioResponse.status}`) as Error & {
+            status?: number;
+            statusCode?: number;
+            response?: { status: number; headers: Headers };
+          };
+          error.status = audioResponse.status;
+          error.statusCode = audioResponse.status;
+          error.response = {
+            status: audioResponse.status,
+            headers: audioResponse.headers,
+          };
+          throw error;
+        }
+        const buffer = await audioResponse.arrayBuffer();
+        return Buffer.from(buffer);
+      } catch (error) {
+        if (signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
+          throw error;
+        }
+
+        const status = getUpstreamStatus(error) ?? 0;
+        const retryable = status === 429 || status >= 500;
+        const retryAfterSeconds = status === 429 ? getUpstreamRetryAfterSeconds(error) : undefined;
+        const delay = retryAfterSeconds ? Math.max(retryAfterSeconds * 1000, 1000) : 10_000;
+        if (status === 429) {
+          applyReplicateCooldown(delay);
+        }
+
+        if (!retryable || attempt >= maxRetries) {
+          throw error;
+        }
+
+        await sleepWithSignal(delay, signal);
+        attempt += 1;
+      }
+    }
+  });
+}
+
 async function runProviderRequest(request: ResolvedServerTTSRequest, signal: AbortSignal): Promise<Buffer> {
   const mockBuffer = await getTestMockTtsBuffer(request.testNamespace);
   if (mockBuffer) return mockBuffer;
+
+  if (request.provider === 'replicate') {
+    return runReplicateRequest(request, signal);
+  }
 
   const openai = new OpenAI({
     apiKey: request.apiKey,

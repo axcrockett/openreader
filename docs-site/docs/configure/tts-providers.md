@@ -15,10 +15,17 @@ Set env vars as deployment-level defaults. Users (or you, in a single-user setup
 ## Providers
 
 - **OpenAI**: Cloud. Base URL pre-filled (`https://api.openai.com/v1`). API key required.
-- **Deepinfra**: Cloud. Base URL pre-filled (`https://api.deepinfra.com/v1/openai`). API key required.
+- **Replicate**: Cloud. Base URL managed internally by OpenReader. API key required.
+- **DeepInfra**: Cloud. Base URL pre-filled (`https://api.deepinfra.com/v1/openai`). API key required.
 - **Custom OpenAI-Like**: Self-hosted or any custom endpoint. `API_BASE` must be set manually (typically ending in `/v1`). API key optional.
 
-For `OpenAI` and `Deepinfra` you only need to supply an API key. For `Custom OpenAI-Like` you must also set `API_BASE`.
+For `OpenAI`, `DeepInfra`, and `Replicate` you only need to supply an API key. For `Custom OpenAI-Like` you must also set `API_BASE`.
+
+## Built-in model catalogs
+
+- **Replicate** models: `alphanumericuser/kokoro-82m:89b6fa84e4fa2dd6bd3a96be3e1f12827a3516c9fda8fddbac7a0be131c9a6f5`, `google/gemini-3.1-flash-tts`, `minimax/speech-2.8-turbo`, `qwen/qwen3-tts`, `inworld/tts-1.5-mini` (or choose `Other` and enter any Replicate model ID, such as `owner/model` or `owner/model:version`)
+- **OpenAI** models: `tts-1`, `tts-1-hd`, `gpt-4o-mini-tts`
+- **DeepInfra** models: includes `hexgrad/Kokoro-82M` and additional hosted models (depending on API key / feature flags)
 
 ## Custom provider requirements
 
@@ -36,6 +43,7 @@ TTS requests originate from the **Next.js server**, not the browser. `API_BASE` 
 - [Kokoro-FastAPI](./tts-provider-guides/kokoro-fastapi)
 - [KittenTTS-FastAPI](./tts-provider-guides/kitten-tts-fastapi)
 - [Orpheus-FastAPI](./tts-provider-guides/orpheus-fastapi)
+- [Replicate](./tts-provider-guides/replicate)
 - [DeepInfra](./tts-provider-guides/deepinfra)
 - [OpenAI](./tts-provider-guides/openai)
 - [Other](./tts-provider-guides/other)

@@ -39,7 +39,7 @@ import { getDocumentProgress, scheduleDocumentProgressSync } from '@/lib/client/
 import { withRetry, generateTTS, alignAudio } from '@/lib/client/api/audiobooks';
 import { preprocessSentenceForAudio, splitTextToTtsBlocks, splitTextToTtsBlocksEPUB } from '@/lib/shared/nlp';
 import { isKokoroModel } from '@/lib/shared/kokoro';
-import { supportsTtsInstructions } from '@/lib/shared/tts-provider-catalog';
+import { supportsNativeModelSpeed, supportsTtsInstructions } from '@/lib/shared/tts-provider-catalog';
 import { useAuthRateLimit } from '@/contexts/AuthRateLimitContext';
 import type {
   TTSLocation,
@@ -386,6 +386,10 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
   const [voice, setVoice] = useState(configVoice);
   const [ttsModel, setTTSModel] = useState(configTTSModel);
   const [ttsInstructions, setTTSInstructions] = useState(configTTSInstructions);
+  const effectiveNativeSpeed = useMemo(
+    () => (supportsNativeModelSpeed(configTTSProvider, ttsModel) ? speed : 1),
+    [configTTSProvider, ttsModel, speed],
+  );
 
   // Track pending preload requests
   const preloadRequests = useRef<Map<string, Promise<string>>>(new Map());
@@ -1015,7 +1019,7 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
       const alignmentKey = buildCacheKey(
         sentence,
         voice,
-        speed,
+        effectiveNativeSpeed,
         configTTSProvider,
         ttsModel,
       );
@@ -1053,7 +1057,7 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
     const audioCacheKey = buildCacheKey(
       sentence,
       voice,
-      speed,
+      effectiveNativeSpeed,
       configTTSProvider,
       ttsModel,
     );
@@ -1097,7 +1101,7 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
       const reqBody: TTSRequestPayload = {
         text: sentence,
         voice,
-        speed,
+        speed: effectiveNativeSpeed,
         format: 'mp3',
         model: ttsModel,
         instructions: supportsTtsInstructions(ttsModel) ? ttsInstructions : undefined,
@@ -1190,7 +1194,7 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
     }
   }, [
     voice,
-    speed,
+    effectiveNativeSpeed,
     ttsModel,
     ttsInstructions,
     audioCache,
@@ -1532,7 +1536,7 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
     const alignmentKey = buildCacheKey(
       sentence,
       voice,
-      speed,
+      effectiveNativeSpeed,
       configTTSProvider,
       ttsModel,
     );
@@ -1549,7 +1553,7 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
     if (howl) {
       howl.play();
     }
-  }, [sentences, currentIndex, playSentenceWithHowl, voice, speed, configTTSProvider, ttsModel]);
+  }, [sentences, currentIndex, playSentenceWithHowl, voice, effectiveNativeSpeed, configTTSProvider, ttsModel]);
 
   // Keep the current playback rate applied to the active Howl. Some browsers (notably
   // iOS Safari with HTML5 audio) can reset playbackRate after initial load/play.
@@ -1620,7 +1624,7 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
       const nextKey = buildCacheKey(
         nextSentence,
         voice,
-        speed,
+        effectiveNativeSpeed,
         configTTSProvider,
         ttsModel,
       );
@@ -1673,7 +1677,7 @@ export function TTSProvider({ children }: { children: ReactNode }): ReactElement
     } catch (error) {
       console.error('Error initiating preload:', error);
     }
-  }, [isAtLimit, currentIndex, sentences, audioCache, processSentence, voice, speed, configTTSProvider, ttsModel]);
+  }, [isAtLimit, currentIndex, sentences, audioCache, processSentence, voice, effectiveNativeSpeed, configTTSProvider, ttsModel]);
 
   /**
    * Main Playback Driver

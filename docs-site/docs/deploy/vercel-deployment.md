@@ -18,8 +18,7 @@ This guide covers deploying OpenReader to Vercel with external Postgres and S3-c
 Recommended production setup (auth enabled):
 
 ```bash
-API_BASE=https://api.deepinfra.com/v1/openai
-API_KEY=your_deepinfra_key
+API_KEY=your_replicate_key
 POSTGRES_URL=postgres://...
 USE_EMBEDDED_WEED_MINI=false
 S3_ACCESS_KEY_ID=...
@@ -33,8 +32,8 @@ AUTH_SECRET=...
 NEXT_PUBLIC_ENABLE_DOCX_CONVERSION=false
 NEXT_PUBLIC_ENABLE_DESTRUCTIVE_DELETE_ACTIONS=false
 NEXT_PUBLIC_ENABLE_TTS_PROVIDERS_TAB=false
-NEXT_PUBLIC_DEFAULT_TTS_PROVIDER=deepinfra
-NEXT_PUBLIC_DEFAULT_TTS_MODEL=hexgrad/Kokoro-82M
+NEXT_PUBLIC_DEFAULT_TTS_PROVIDER=replicate
+NEXT_PUBLIC_DEFAULT_TTS_MODEL=alphanumericuser/kokoro-82m:89b6fa84e4fa2dd6bd3a96be3e1f12827a3516c9fda8fddbac7a0be131c9a6f5
 NEXT_PUBLIC_SHOW_ALL_DEEPINFRA_MODELS=false
 NEXT_PUBLIC_ENABLE_AUDIOBOOK_EXPORT=true
 NEXT_PUBLIC_ENABLE_WORD_HIGHLIGHT=false
@@ -49,8 +48,8 @@ We recommend setting these defaults for a production-like environment:
 - `NEXT_PUBLIC_ENABLE_DOCX_CONVERSION=false`: Disables DOCX upload (requires external tools anyway)
 - `NEXT_PUBLIC_ENABLE_DESTRUCTIVE_DELETE_ACTIONS=false`: Hides destructive "Delete All" actions
 - `NEXT_PUBLIC_ENABLE_TTS_PROVIDERS_TAB=false`: Hides the Settings -> TTS Provider section
-- `NEXT_PUBLIC_DEFAULT_TTS_PROVIDER=deepinfra`: Points default TTS to a scalable provider
-- `NEXT_PUBLIC_DEFAULT_TTS_MODEL=hexgrad/Kokoro-82M`: Uses a high-quality default model
+- `NEXT_PUBLIC_DEFAULT_TTS_PROVIDER=replicate`: Points default TTS to a scalable provider
+- `NEXT_PUBLIC_DEFAULT_TTS_MODEL=alphanumericuser/kokoro-82m:89b6fa84e4fa2dd6bd3a96be3e1f12827a3516c9fda8fddbac7a0be131c9a6f5`: Uses a low-cost default model
 - `NEXT_PUBLIC_SHOW_ALL_DEEPINFRA_MODELS=false`: Restricts usage to free models if no key is provided
 - `NEXT_PUBLIC_ENABLE_AUDIOBOOK_EXPORT=true`: (Optional) Controls audiobook export UI
 - `NEXT_PUBLIC_ENABLE_WORD_HIGHLIGHT=false`: (Optional) Controls word highlighting UI (requires timestamp backend)
