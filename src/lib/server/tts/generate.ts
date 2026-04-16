@@ -8,6 +8,7 @@ import {
   supportsNativeModelSpeed,
   supportsTtsInstructions,
 } from '@/lib/shared/tts-provider-catalog';
+import { getUpstreamRetryAfterSeconds, getUpstreamStatus } from '@/lib/server/tts/upstream-response';
 import { LRUCache } from 'lru-cache';
 import { createHash } from 'crypto';
 import { access, readFile } from 'fs/promises';
@@ -91,33 +92,6 @@ function sleepWithSignal(ms: number, signal: AbortSignal): Promise<void> {
 
     signal.addEventListener('abort', onAbort, { once: true });
   });
-}
-
-function getUpstreamStatus(error: unknown): number | undefined {
-  if (typeof error !== 'object' || error === null) return undefined;
-  const rec = error as Record<string, unknown>;
-  if (typeof rec.status === 'number') return rec.status;
-  if (typeof rec.statusCode === 'number') return rec.statusCode;
-  const response = rec.response as { status?: unknown } | undefined;
-  if (response && typeof response.status === 'number') return response.status;
-  return undefined;
-}
-
-function getUpstreamRetryAfterSeconds(error: unknown): number | undefined {
-  if (typeof error !== 'object' || error === null) return undefined;
-  const rec = error as Record<string, unknown>;
-  const response = rec.response as { headers?: { get?: (name: string) => string | null } } | undefined;
-  const retryAfterHeader = response?.headers?.get?.('retry-after');
-  if (!retryAfterHeader) return undefined;
-  const parsed = Number(retryAfterHeader);
-  if (Number.isFinite(parsed) && parsed > 0) {
-    return parsed;
-  }
-  const parsedDateMs = Date.parse(retryAfterHeader);
-  if (!Number.isFinite(parsedDateMs)) return undefined;
-  const seconds = (parsedDateMs - Date.now()) / 1000;
-  if (seconds <= 0) return undefined;
-  return Math.ceil(seconds);
 }
 
 function applyReplicateCooldown(cooldownMs: number) {

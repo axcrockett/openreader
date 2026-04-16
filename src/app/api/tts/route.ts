@@ -14,6 +14,7 @@ import {
   getCachedTTSBuffer,
   getTTSContentType,
 } from '@/lib/server/tts/generate';
+import { getUpstreamRetryAfterSeconds, getUpstreamStatus } from '@/lib/server/tts/upstream-response';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -47,33 +48,6 @@ function formatLimitForHint(limit: number): string {
   }
   if (limit >= 1_000) return `${Math.round(limit / 1_000)}K`;
   return String(limit);
-}
-
-function getUpstreamStatus(error: unknown): number | undefined {
-  if (typeof error !== 'object' || error === null) return undefined;
-  const rec = error as Record<string, unknown>;
-  if (typeof rec.status === 'number') return rec.status;
-  if (typeof rec.statusCode === 'number') return rec.statusCode;
-  const response = rec.response as { status?: unknown } | undefined;
-  if (response && typeof response.status === 'number') return response.status;
-  return undefined;
-}
-
-function getUpstreamRetryAfterSeconds(error: unknown): number | undefined {
-  if (typeof error !== 'object' || error === null) return undefined;
-  const rec = error as Record<string, unknown>;
-  const response = rec.response as { headers?: { get?: (name: string) => string | null } } | undefined;
-  const retryAfterHeader = response?.headers?.get?.('retry-after');
-  if (!retryAfterHeader) return undefined;
-  const parsed = Number(retryAfterHeader);
-  if (Number.isFinite(parsed) && parsed > 0) {
-    return Math.ceil(parsed);
-  }
-  const parsedDateMs = Date.parse(retryAfterHeader);
-  if (!Number.isFinite(parsedDateMs)) return undefined;
-  const seconds = (parsedDateMs - Date.now()) / 1000;
-  if (seconds <= 0) return undefined;
-  return Math.ceil(seconds);
 }
 
 export async function POST(req: NextRequest) {

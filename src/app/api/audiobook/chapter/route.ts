@@ -41,7 +41,7 @@ interface ConversionRequest {
   bookId?: string;
   format?: TTSAudiobookFormat;
   chapterIndex?: number;
-  settings?: AudiobookGenerationSettings;
+  settings?: unknown;
 }
 
 type ChapterObject = {
@@ -97,6 +97,29 @@ function normalizeNativeSpeedForSettings(settings: AudiobookGenerationSettings):
   return supportsNativeModelSpeed(settings.ttsProvider, settings.ttsModel)
     ? settings
     : { ...settings, nativeSpeed: 1 };
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isAudiobookFormat(value: unknown): value is TTSAudiobookFormat {
+  return value === 'mp3' || value === 'm4b';
+}
+
+function isAudiobookGenerationSettings(value: unknown): value is AudiobookGenerationSettings {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return typeof record.ttsProvider === 'string'
+    && typeof record.ttsModel === 'string'
+    && typeof record.voice === 'string'
+    && isFiniteNumber(record.nativeSpeed)
+    && isFiniteNumber(record.postSpeed)
+    && isAudiobookFormat(record.format)
+    && (record.ttsInstructions === undefined || typeof record.ttsInstructions === 'string');
 }
 
 function chapterFileMimeType(format: TTSAudiobookFormat): string {
@@ -297,24 +320,41 @@ export async function POST(request: NextRequest) {
     const existingChapters = listChapterObjects(objectNames);
     const hasChapters = existingChapters.length > 0;
 
-    let existingSettings: AudiobookGenerationSettings | null = null;
+    let normalizedExistingSettings: AudiobookGenerationSettings | undefined;
     try {
-      existingSettings = JSON.parse(
+      const parsedSettings = JSON.parse(
         (await getAudiobookObjectBuffer(bookId, storageUserId, 'audiobook.meta.json', testNamespace)).toString('utf8'),
-      ) as AudiobookGenerationSettings;
+      ) as unknown;
+      if (!isAudiobookGenerationSettings(parsedSettings)) {
+        console.error('Invalid audiobook.meta.json settings payload', { bookId, storageUserId });
+        return NextResponse.json({ error: 'Invalid audiobook metadata settings' }, { status: 500 });
+      }
+      normalizedExistingSettings = normalizeNativeSpeedForSettings(parsedSettings);
     } catch (error) {
       if (!isMissingBlobError(error)) throw error;
-      existingSettings = null;
+      normalizedExistingSettings = undefined;
     }
 
-    const normalizedExistingSettings = existingSettings ? normalizeNativeSpeedForSettings(existingSettings) : undefined;
-    const incomingSettings = data.settings ? normalizeNativeSpeedForSettings(data.settings) : undefined;
-    const mergedSettings = (normalizedExistingSettings || incomingSettings)
+    const incomingSettings = (() => {
+      if (data.settings === undefined) {
+        return undefined;
+      }
+      if (!isAudiobookGenerationSettings(data.settings)) {
+        return null;
+      }
+      return normalizeNativeSpeedForSettings(data.settings);
+    })();
+
+    if (incomingSettings === null) {
+      return NextResponse.json({ error: 'Invalid audiobook settings payload' }, { status: 400 });
+    }
+
+    const mergedSettings = normalizedExistingSettings && incomingSettings
       ? normalizeNativeSpeedForSettings({
-          ...(normalizedExistingSettings || {}),
-          ...(incomingSettings || {}),
-        } as AudiobookGenerationSettings)
-      : undefined;
+          ...normalizedExistingSettings,
+          ...incomingSettings,
+        })
+      : normalizedExistingSettings ?? incomingSettings;
 
     if (normalizedExistingSettings && hasChapters && incomingSettings) {
       const mismatch =
@@ -511,7 +551,7 @@ export async function POST(request: NextRequest) {
     await deleteAudiobookObject(bookId, storageUserId, 'complete.mp3.manifest.json', testNamespace).catch(() => {});
     await deleteAudiobookObject(bookId, storageUserId, 'complete.m4b.manifest.json', testNamespace).catch(() => {});
 
-    if (!existingSettings && incomingSettings) {
+    if (!normalizedExistingSettings && incomingSettings) {
       await putAudiobookObject(
         bookId,
         storageUserId,

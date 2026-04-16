@@ -124,8 +124,55 @@ const DEEPINFRA_DEFAULT_VOICES_BY_MODEL: Record<string, readonly string[]> = {
   'Zyphra/Zonos-v0.1-hybrid': ['random'],
   'Zyphra/Zonos-v0.1-transformer': ['random'],
 };
-const replicateVoiceInputKeyCache = new Map<string, ReplicateVoiceInputKey>();
-const replicateOpenApiSchemaPromiseCache = new Map<string, Promise<unknown | null>>();
+
+class LRUMap<K, V> {
+  private readonly maxEntries: number;
+  private readonly store = new Map<K, V>();
+
+  constructor(maxEntries: number) {
+    this.maxEntries = Math.max(1, maxEntries);
+  }
+
+  get(key: K): V | undefined {
+    const value = this.store.get(key);
+    if (value === undefined) {
+      return undefined;
+    }
+    this.store.delete(key);
+    this.store.set(key, value);
+    return value;
+  }
+
+  set(key: K, value: V): this {
+    if (this.store.has(key)) {
+      this.store.delete(key);
+    }
+    this.store.set(key, value);
+
+    if (this.store.size > this.maxEntries) {
+      const oldestKey = this.store.keys().next().value as K | undefined;
+      if (oldestKey !== undefined) {
+        this.store.delete(oldestKey);
+      }
+    }
+
+    return this;
+  }
+
+  delete(key: K): boolean {
+    return this.store.delete(key);
+  }
+}
+
+const REPLICATE_VOICE_INPUT_KEY_CACHE_MAX_ENTRIES = 128;
+const REPLICATE_OPENAPI_SCHEMA_PROMISE_CACHE_MAX_ENTRIES = 128;
+
+const replicateVoiceInputKeyCache = new LRUMap<string, ReplicateVoiceInputKey>(
+  REPLICATE_VOICE_INPUT_KEY_CACHE_MAX_ENTRIES,
+);
+const replicateOpenApiSchemaPromiseCache = new LRUMap<string, Promise<unknown | null>>(
+  REPLICATE_OPENAPI_SCHEMA_PROMISE_CACHE_MAX_ENTRIES,
+);
 
 export const TTS_PROVIDER_DEFINITIONS: TtsProviderDefinition[] = [
   {
