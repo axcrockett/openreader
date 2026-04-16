@@ -59,6 +59,7 @@ const REPLICATE_MODELS: TtsModelDefinition[] = [
   { id: 'minimax/speech-2.8-turbo', name: 'MiniMax Speech 2.8 Turbo' },
   { id: 'qwen/qwen3-tts', name: 'Qwen3 TTS' },
   { id: 'inworld/tts-1.5-mini', name: 'Inworld TTS 1.5 Mini' },
+  { id: 'custom', name: 'Other' },
 ];
 
 const DEFAULT_MODELS: TtsModelDefinition[] = [{ id: 'tts-1', name: 'TTS-1' }];
@@ -104,7 +105,7 @@ export const TTS_PROVIDER_DEFINITIONS: TtsProviderDefinition[] = [
   {
     id: 'replicate',
     name: 'Replicate',
-    supportsCustomModel: false,
+    supportsCustomModel: true,
     models: () => REPLICATE_MODELS,
   },
   {
@@ -137,6 +138,11 @@ const REPLICATE_MODELS_WITHOUT_NATIVE_SPEED = new Set([
   'qwen/qwen3-tts',
 ]);
 
+const REPLICATE_MODELS_WITH_NATIVE_SPEED = new Set([
+  'minimax/speech-2.8-turbo',
+  'inworld/tts-1.5-mini',
+]);
+
 export function supportsTtsInstructions(model: string | null | undefined): boolean {
   return !!model && MODELS_WITH_INSTRUCTIONS.has(model);
 }
@@ -146,8 +152,12 @@ export function supportsNativeModelSpeed(provider: string | null | undefined, mo
     return true;
   }
 
-  if (provider === 'replicate' && REPLICATE_MODELS_WITHOUT_NATIVE_SPEED.has(model)) {
-    return false;
+  if (provider === 'replicate') {
+    if (REPLICATE_MODELS_WITHOUT_NATIVE_SPEED.has(model)) {
+      return false;
+    }
+
+    return REPLICATE_MODELS_WITH_NATIVE_SPEED.has(model);
   }
 
   return true;
@@ -193,7 +203,7 @@ export function getDefaultVoices(provider: string, model: string): string[] {
     if (model === 'inworld/tts-1.5-mini') {
       return [...INWORLD_TTS_VOICES];
     }
-    return [...GEMINI_FLASH_TTS_VOICES];
+    return ['default'];
   }
 
   if (provider === 'deepinfra') {

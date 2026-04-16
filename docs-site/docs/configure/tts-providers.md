@@ -23,7 +23,7 @@ For `OpenAI`, `Deepinfra`, and `Replicate` you only need to supply an API key. F
 
 ## Built-in model catalogs
 
-- **Replicate** models: `google/gemini-3.1-flash-tts`, `minimax/speech-2.8-turbo`, `qwen/qwen3-tts`, `inworld/tts-1.5-mini`
+- **Replicate** models: `google/gemini-3.1-flash-tts`, `minimax/speech-2.8-turbo`, `qwen/qwen3-tts`, `inworld/tts-1.5-mini` (or choose `Other` and enter any Replicate model ID)
 - **OpenAI** models: `tts-1`, `tts-1-hd`, `gpt-4o-mini-tts`
 - **Deepinfra** models: includes `hexgrad/Kokoro-82M` and additional hosted models (depending on API key / feature flags)
 

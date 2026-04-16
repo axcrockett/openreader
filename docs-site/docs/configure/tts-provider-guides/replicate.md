@@ -29,6 +29,7 @@ Settings modal values override env vars. See [TTS Providers](../tts-providers) f
   - `minimax/speech-2.8-turbo`
   - `qwen/qwen3-tts`
   - `inworld/tts-1.5-mini`
+- You can also choose `Other` and enter any Replicate model ID (for example `owner/model-name`).
 - Native model speed is not available on all Replicate models; OpenReader hides/disables native speed controls where unsupported.
 - TTS requests are sent from the server, not the browser. The API key is never exposed to clients.
 
