@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/server/auth/auth';
-import { getDefaultVoices, resolveVoices } from '@/lib/shared/tts-provider-catalog';
+import { getDefaultVoices } from '@/lib/shared/tts-provider-catalog';
+import { resolveVoices } from '@/lib/server/tts/voice-resolution';
 
 export async function GET(req: NextRequest) {
   try {

@@ -4,12 +4,11 @@ import {
   REPLICATE_KOKORO_82M_VERSIONED_MODEL,
   getDefaultVoices,
   providerSupportsCustomModel,
-  resolveReplicateVoiceInputKey,
-  resolveVoices,
   resolveProviderModels,
   supportsNativeModelSpeed,
   supportsTtsInstructions,
 } from '../../src/lib/shared/tts-provider-catalog';
+import { resolveReplicateVoiceInputKey, resolveVoices } from '../../src/lib/server/tts/voice-resolution';
 import { applyConfigUpdate, getVoicePreferenceKey } from '../../src/lib/client/config/updates';
 import { buildSyncedPreferencePatch } from '../../src/lib/client/config/preferences';
 

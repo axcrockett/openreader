@@ -4,10 +4,10 @@ import { SpeechCreateParams } from 'openai/resources/audio/speech.mjs';
 import { isKokoroModel } from '@/lib/shared/kokoro';
 import {
   REPLICATE_KOKORO_82M_VERSIONED_MODEL,
-  resolveReplicateVoiceInputKey,
   supportsNativeModelSpeed,
   supportsTtsInstructions,
 } from '@/lib/shared/tts-provider-catalog';
+import { resolveReplicateVoiceInputKey } from '@/lib/server/tts/voice-resolution';
 import { getUpstreamRetryAfterSeconds, getUpstreamStatus } from '@/lib/server/tts/upstream-response';
 import { LRUCache } from 'lru-cache';
 import { createHash } from 'crypto';
@@ -52,7 +52,10 @@ type InflightEntry = {
   consumers: number;
 };
 
-let replicateBlockedUntilMs = 0;
+const REPLICATE_COOLDOWN_SCOPE_CACHE_MAX_ENTRIES = 512;
+const replicateBlockedUntilByScope = new LRUCache<string, number>({
+  max: REPLICATE_COOLDOWN_SCOPE_CACHE_MAX_ENTRIES,
+});
 
 const TTS_CACHE_MAX_SIZE_BYTES = Number(process.env.TTS_CACHE_MAX_SIZE_BYTES || 256 * 1024 * 1024); // 256MB
 const TTS_CACHE_TTL_MS = Number(process.env.TTS_CACHE_TTL_MS || 1000 * 60 * 30); // 30 minutes
@@ -94,18 +97,129 @@ function sleepWithSignal(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-function applyReplicateCooldown(cooldownMs: number) {
-  if (!Number.isFinite(cooldownMs) || cooldownMs <= 0) return;
-  const next = Date.now() + cooldownMs;
-  replicateBlockedUntilMs = Math.max(replicateBlockedUntilMs, next);
+function getReplicateCooldownScopeKey(request: ResolvedServerTTSRequest): string {
+  return createHash('sha256')
+    .update(`replicate:${request.apiKey}:${request.model as string}`)
+    .digest('hex');
 }
 
-async function runWithReplicateGate<T>(signal: AbortSignal, operation: () => Promise<T>): Promise<T> {
-  const waitMs = Math.max(0, replicateBlockedUntilMs - Date.now());
+function applyReplicateCooldown(scopeKey: string, cooldownMs: number) {
+  if (!Number.isFinite(cooldownMs) || cooldownMs <= 0) return;
+  const next = Date.now() + cooldownMs;
+  const current = replicateBlockedUntilByScope.get(scopeKey) ?? 0;
+  replicateBlockedUntilByScope.set(scopeKey, Math.max(current, next));
+}
+
+async function runWithReplicateGate<T>(
+  scopeKey: string,
+  signal: AbortSignal,
+  operation: () => Promise<T>
+): Promise<T> {
+  const blockedUntilMs = replicateBlockedUntilByScope.get(scopeKey) ?? 0;
+  const waitMs = Math.max(0, blockedUntilMs - Date.now());
   if (waitMs > 0) {
     await sleepWithSignal(waitMs, signal);
   }
   return operation();
+}
+
+function normalizeReplicateUrlCandidate(value: unknown): string | null {
+  if (value instanceof URL) {
+    return value.toString();
+  }
+
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.startsWith('data:')) {
+    return trimmed;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? trimmed : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractReplicateAudioUrlFromValue(value: unknown, seen: Set<object>): string | null {
+  const direct = normalizeReplicateUrlCandidate(value);
+  if (direct) {
+    return direct;
+  }
+
+  if (typeof value !== 'object' || value === null) {
+    return null;
+  }
+
+  if (seen.has(value)) {
+    return null;
+  }
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const extracted = extractReplicateAudioUrlFromValue(item, seen);
+      if (extracted) {
+        return extracted;
+      }
+    }
+    return null;
+  }
+
+  const maybeUrlMethod = (value as { url?: unknown }).url;
+  if (typeof maybeUrlMethod === 'function') {
+    try {
+      const fromUrlMethod = normalizeReplicateUrlCandidate(maybeUrlMethod.call(value));
+      if (fromUrlMethod) {
+        return fromUrlMethod;
+      }
+    } catch { }
+  } else {
+    const fromUrlField = normalizeReplicateUrlCandidate(maybeUrlMethod);
+    if (fromUrlField) {
+      return fromUrlField;
+    }
+  }
+
+  const maybeToString = (value as { toString?: unknown }).toString;
+  if (typeof maybeToString === 'function') {
+    try {
+      const fromToString = normalizeReplicateUrlCandidate(maybeToString.call(value));
+      if (fromToString) {
+        return fromToString;
+      }
+    } catch { }
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const key of ['audio', 'output', 'outputs', 'file', 'files', 'data', 'result']) {
+    if (!(key in record)) continue;
+    const extracted = extractReplicateAudioUrlFromValue(record[key], seen);
+    if (extracted) {
+      return extracted;
+    }
+  }
+
+  for (const nested of Object.values(record)) {
+    const extracted = extractReplicateAudioUrlFromValue(nested, seen);
+    if (extracted) {
+      return extracted;
+    }
+  }
+
+  return null;
+}
+
+export function extractReplicateAudioUrl(output: unknown): string | null {
+  return extractReplicateAudioUrlFromValue(output, new Set<object>());
 }
 
 function resolveTTSRequest(input: ServerTTSRequest): ResolvedServerTTSRequest {
@@ -319,8 +433,9 @@ async function runReplicateRequest(request: ResolvedServerTTSRequest, signal: Ab
   const replicate = new Replicate({ auth: request.apiKey });
   const input = await buildReplicateInput(request);
   const modelId = request.model as `${string}/${string}`;
+  const cooldownScopeKey = getReplicateCooldownScopeKey(request);
 
-  return runWithReplicateGate(signal, async () => {
+  return runWithReplicateGate(cooldownScopeKey, signal, async () => {
     const maxRetries = Number(process.env.TTS_MAX_RETRIES ?? 2);
     let attempt = 0;
 
@@ -328,8 +443,10 @@ async function runReplicateRequest(request: ResolvedServerTTSRequest, signal: Ab
       try {
         const output = await replicate.run(modelId, { input, signal }) as unknown;
 
-        // Output is a URI string pointing to the generated audio file
-        const audioUrl = typeof output === 'string' ? output : String(output);
+        const audioUrl = extractReplicateAudioUrl(output);
+        if (!audioUrl) {
+          throw new Error('Replicate output did not include a fetchable audio URL');
+        }
         const audioResponse = await fetch(audioUrl, { signal });
         if (!audioResponse.ok) {
           const error = new Error(`Failed to fetch Replicate audio: ${audioResponse.status}`) as Error & {
@@ -357,7 +474,7 @@ async function runReplicateRequest(request: ResolvedServerTTSRequest, signal: Ab
         const retryAfterSeconds = status === 429 ? getUpstreamRetryAfterSeconds(error) : undefined;
         const delay = retryAfterSeconds ? Math.max(retryAfterSeconds * 1000, 1000) : 10_000;
         if (status === 429) {
-          applyReplicateCooldown(delay);
+          applyReplicateCooldown(cooldownScopeKey, delay);
         }
 
         if (!retryable || attempt >= maxRetries) {
