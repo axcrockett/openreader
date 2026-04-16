@@ -17,6 +17,11 @@ npm install -g pnpm
 - A reachable TTS API server
 - [SeaweedFS](https://github.com/seaweedfs/seaweedfs) `weed` binary (required unless using external S3 storage)
 
+:::warning SeaweedFS Compatibility Note (April 16, 2026)
+If you see intermittent S3 `InternalError` upload failures with embedded storage, use SeaweedFS `4.18`.
+OpenReader currently pins `4.18` in CI and Docker builds while `4.19` compatibility is investigated.
+:::
+
 <Tabs groupId="seaweedfs-install">
   <TabItem value="macos" label="macOS" default>
 

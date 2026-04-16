@@ -10,6 +10,11 @@ import TabItem from '@theme/TabItem';
 - A recent Docker version installed
 - A TTS API server that OpenReader can reach (Kokoro-FastAPI, KittenTTS-FastAPI, Orpheus-FastAPI, Replicate, DeepInfra, OpenAI, or equivalent)
 
+:::warning SeaweedFS Compatibility Note (April 16, 2026)
+OpenReader currently pins embedded SeaweedFS to `4.18` in CI and Docker builds.
+`4.19` introduced intermittent `InternalError` responses on S3 `PutObject` in our upload flow.
+:::
+
 :::note
 If you have suitable hardware, you can run Kokoro locally with Docker. See [Kokoro-FastAPI](./configure/tts-provider-guides/kokoro-fastapi).
 :::

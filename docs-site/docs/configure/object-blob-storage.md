@@ -12,6 +12,11 @@ This page documents storage backends, blob upload routing, and core Docker mount
 - Embedded (default): SQLite metadata + embedded SeaweedFS (`weed mini`) blobs.
 - External: Postgres + external S3-compatible object storage.
 
+:::warning SeaweedFS Compatibility Note (April 16, 2026)
+OpenReader currently pins embedded SeaweedFS to `4.18` in CI and Docker builds.
+`4.19` introduced intermittent `InternalError` responses on S3 `PutObject` in our upload flow.
+:::
+
 Storage variables are documented in [Environment Variables](../reference/environment-variables#database-and-object-blob-storage).
 
 ## Ports
