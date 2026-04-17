@@ -113,13 +113,13 @@ test.describe('Document Upload Tests', () => {
     await clickDocumentLink(page, 'sample.pdf');
     await expectViewerForFile(page, 'sample.pdf');
     await page.goBack();
-    await expect(page.getByText('Local Documents')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('Your Documents')).toBeVisible({ timeout: 10000 });
 
     // EPUB navigation and viewer
     await clickDocumentLink(page, 'sample.epub');
     await expectViewerForFile(page, 'sample.epub');
     await page.goBack();
-    await expect(page.getByText('Local Documents')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('Your Documents')).toBeVisible({ timeout: 10000 });
 
     // TXT navigation and viewer (HTML viewer)
     await clickDocumentLink(page, 'sample.txt');

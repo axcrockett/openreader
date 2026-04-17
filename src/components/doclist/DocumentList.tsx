@@ -308,7 +308,7 @@ export function DocumentList() {
     <DndProvider backend={HTML5Backend}>
       <div className="w-full mx-auto">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg sm:text-xl font-semibold text-foreground">Local Documents</h2>
+          <h2 className="text-lg sm:text-xl font-semibold text-foreground">Your Documents</h2>
           <SortControls
             sortBy={sortBy}
             sortDirection={sortDirection}
