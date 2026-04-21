@@ -65,6 +65,7 @@ const createAuth = () => betterAuth({
   trustedOrigins: getTrustedOrigins(),
   emailAndPassword: {
     enabled: true,
+    disableSignUp: true,
     requireEmailVerification: false, // Set to true in production
     async sendResetPassword(data) {
       // Send an email to the user with a link to reset their password
