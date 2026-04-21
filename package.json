@@ -6,6 +6,7 @@
     "dev": "node scripts/openreader-entrypoint.mjs -- pnpm dev:raw",
     "dev:raw": "next dev --turbopack -p 3003",
     "build": "next build",
+    "vercel-build": "pnpm migrate && pnpm build",
     "start": "node scripts/openreader-entrypoint.mjs -- pnpm start:raw",
     "start:raw": "next start -p 3003",
     "lint": "next lint",
